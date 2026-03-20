@@ -1,0 +1,4 @@
+svgwrite>=1.4.3
+timezonefinder>=6.5.0
+tzdata>=2024.1
+geopy>=2.4.1

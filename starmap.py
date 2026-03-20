@@ -1,8 +1,19 @@
-
 import svgwrite
 import random 
 import math
 import argparse
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+try:
+    import timezonefinder
+except ImportError:
+    timezonefinder = None
+
+try:
+    from geopy.geocoders import Nominatim
+except ImportError:
+    Nominatim = None
 
 ############ DEFAULT VALUES AND CONSTS ####################################
 
@@ -10,9 +21,14 @@ font_style = "font-size:10px; letter-spacing:0.7px; font-family:sans-serif; stro
 font_style2 = "font-size:2px; letter-spacing:0.7px; font-family:sans-serif; stroke-width:2;"
 
 background_color = "rgb(255,255,255)"#rgb(45,59,98)"
-line_color = "rgb(150,150,150)" #"rgb(255,255,255)"
+line_color = "rgb(180,180,180)" #"rgb(255,255,255)"
 star_color = "rgb(0,0,0)" #"rgb(255,255,255)"
 constellation_color = "rgb(0,0,0)" #"rgb(255,255,255)"
+
+dark_background_color = "rgb(45,59,98)"
+dark_line_color = "rgb(255,255,255)"
+dark_star_color = "rgb(255,255,255)"
+dark_constellation_color = "rgb(255,255,255)"
 
 output_file = 'starmap.svg'
 
@@ -37,15 +53,15 @@ width = 200
 height = 200
 
 #empty space in left and right of the starmap
-borders = 50
+borders = 10
 
 def mm_to_px(mm):
 	px = mm*96/25.4
 	return px
 
 #Smaller the star bigger the magnitude
-magnitude_limit = 6.5
-aperture = 0.4 
+magnitude_limit = 5.7 #6.5
+aperture = 0.4
 
 ############ STARDATAFILE ################################################
 
@@ -103,10 +119,79 @@ def read_constellation_file():
 			tmp[4] = float(tmp[4])
 			constellation_lines.append(tmp)
 
+def str_to_bool(value):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in ("1", "true", "yes", "y", "on")
 
+def detect_timezone_settings(date_str, time_str, lat, lon, manual_utc=None, manual_summertime=None):
+    """
+    Returns: (utc_base_hours, summertime_bool)
+    utc_base_hours = standard offset without DST (e.g. UK winter = 0, Finland winter = 2)
+    """
+    if timezonefinder is None:
+        if manual_utc is None:
+            manual_utc = utc
+        if manual_summertime is None:
+            manual_summertime = False
+        print("timezonefinder not installed -> timezone auto-detect disabled")
+        return manual_utc, manual_summertime
 
+    try:
+        day = int(date_str[0:2])
+        month = int(date_str[3:5])
+        year = int(date_str[6:10])
 
+        hour = int(time_str[0:2])
+        minute = int(time_str[3:5])
+        second = int(time_str[6:8])
 
+        tf = timezonefinder.TimezoneFinder()
+        tz_name = tf.timezone_at(lng=lon, lat=lat) or tf.closest_timezone_at(lng=lon, lat=lat)
+        if not tz_name:
+            print("Could not resolve timezone from coordinates -> using manual/default utc/summertime")
+            return (manual_utc if manual_utc is not None else utc), (manual_summertime if manual_summertime is not None else False)
+
+        local_dt = datetime(year, month, day, hour, minute, second, tzinfo=ZoneInfo(tz_name))
+
+        dst = local_dt.dst() or timedelta(0)
+        total_offset = local_dt.utcoffset() or timedelta(0)
+        base_offset = total_offset - dst  # standard offset, no DST
+
+        auto_utc = base_offset.total_seconds() / 3600.0
+        auto_summertime = bool(dst.total_seconds() != 0)
+
+        final_utc = manual_utc if manual_utc is not None else auto_utc
+        final_summertime = manual_summertime if manual_summertime is not None else auto_summertime
+        return final_utc, final_summertime
+
+    except Exception as ex:
+        print(f"timezone auto-detect failed ({ex}) -> using manual/default utc/summertime")
+        return (manual_utc if manual_utc is not None else utc), (manual_summertime if manual_summertime is not None else False)
+
+def detect_city_name(lat, lon):
+    """Return city/town/village name from coordinates, or empty string."""
+    if Nominatim is None:
+        return ""
+    try:
+        geolocator = Nominatim(user_agent="starmap-svg")
+        location = geolocator.reverse((lat, lon), language="en", exactly_one=True, timeout=10)
+        if not location:
+            return ""
+        address = location.raw.get("address", {})
+        return (
+            address.get("city")
+            or address.get("town")
+            or address.get("village")
+            or address.get("municipality")
+            or address.get("county")
+            or ""
+        )
+    except Exception as ex:
+        print(f"city lookup failed ({ex})")
+        return ""
 
 ############ ARGPARSER ###################################################
 
@@ -114,17 +199,19 @@ parser = argparse.ArgumentParser(description='Generate starmap svg file')
 parser.add_argument('-coord','--coord', help='coordinates in format northern,eastern',default=coord )
 parser.add_argument('-time','--time', help='time in format hour.minute.second',default=time)
 parser.add_argument('-date','--date', help='date in format day.month.year', default=date)
-parser.add_argument('-utc','--utc',nargs='?', help='utc of your location -12 to +12', type=int , default=utc)
+parser.add_argument('-utc','--utc', help='utc of your location (auto if omitted)', type=float, default=None)
 parser.add_argument('-magn','--magn',nargs='?', help='magnitude limit 0.1-12.0',type=float, default=magnitude_limit)
-
-parser.add_argument('-summertime','--summertime',nargs='?', help='if it is summertime on the date of the starchart',type=bool, default=summertime)
+parser.add_argument('-summertime','--summertime', nargs='?', help='force summertime True/False; omit to auto-detect from date/time/coord', type=str_to_bool, const=True, default=None)
 parser.add_argument('-guides','--guides',nargs='?', help='draw guides True/False',type=bool, default=guides )
 parser.add_argument('-constellation','--constellation',nargs='?', help='show constellation True/False',type=bool, default=constellation )
 parser.add_argument('-o','--output', help='output filename.svg',default='starmap.svg' )
 parser.add_argument('-width','--width',nargs='?', help='width in mm',type=int, default=width)
 parser.add_argument('-height','--height',nargs='?', help='height in mm',type=int, default=height)
 parser.add_argument('-info','--info', help='Info text example name of the place', default=info )
-
+parser.add_argument('--no-info', action='store_true', help='disable printing info text block')
+parser.add_argument('-fullview','--fullview',nargs='?', help='show stars in full square',type=str_to_bool, default=fullview )
+parser.add_argument('-aperture','--aperture', nargs='?', help='aperture for star size (default 0.4, bigger = bigger starbursts)', type=float, default=aperture)
+parser.add_argument('-light', '--light', action='store_true', help='use light color scheme (white background, black stars)')
 
 args = parser.parse_args()
 
@@ -132,24 +219,53 @@ coord = args.coord
 time = args.time
 date = args.date
 utc = args.utc
-info = args.info
 output_file = args.output
 guides = args.guides
 magnitude_limit = args.magn
 constellation = args.constellation
-summertime = args.summertime
+aperture = args.aperture
 
 height = args.height
 width = args.width
+fullview = args.fullview
+
+# latitude and longitude
+northern, eastern = map(float, coord.split(','))
+
+# Auto-detect utc/summertime unless manually provided
+utc, summertime = detect_timezone_settings(date, time, northern, eastern, args.utc, args.summertime)
+
+# Set info: explicit --info wins; otherwise city name from coordinates
+
+if args.no_info:
+	borders = 10
+else:
+	info = args.info.strip() if args.info else ""
+	if info == "":
+		info = detect_city_name(northern, eastern)
+	borders = 50
+
+print_info = not args.no_info
 
 print("coordinates:",coord)
 print("date:",date)
 print("time",time)
+print("utc:", utc)
+print("summertime:",summertime)
+print("fullview:",fullview)
+print("guides:",guides)
+print("constellation:",constellation)
+if print_info:
+	print("City name:", info)
 
-#latitude and longitude
-northern,eastern = map(float,coord.split(','))
+# Set color scheme
+if not args.light:
+    background_color = dark_background_color
+    line_color = dark_line_color
+    star_color = dark_star_color
+    constellation_color = dark_constellation_color
 
-########## DRAWING FUNCTIONS  ###########################################
+# ########## DRAWING FUNCTIONS  ###########################################
 
 # Generates random star shape to given coordinate and magnitude and color
 def draw_star(x,y,mag,color):
@@ -374,12 +490,13 @@ if __name__ == '__main__':
 	if constellation:
 		generate_constellations(northern,eastern,date,time)
 
-	if (info != ''):
-		#Text in bottom corner
+	if print_info and (info != ''):
+#Text in bottom corner
 		image.add(image.text(info, insert=("20mm", str(height-21)+'mm'), fill=line_color, style=font_style))
 		image.add(image.text(str(northern)+" N "+str(eastern)+" E " , insert=("20mm", str(height-17)+'mm'), fill=line_color, style=font_style))
 		image.add(image.text(date +" "+ time+ " UTC " + str(utc), insert=("20mm", str(height-13)+'mm'), fill=line_color, style=font_style))
 
 	image.save()
+
 	print(output_file ," generated")
 
