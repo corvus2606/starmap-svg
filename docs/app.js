@@ -1,4 +1,4 @@
-let map, marker, autocomplete;
+let map, marker, autocomplete, tileLayer;
 let LAST_PLACE_LABEL = "";
 
 // Minimal fallback catalog (RA hours, Dec degrees, Mag)
@@ -32,7 +32,7 @@ function applyMapLocation(lat, lng, zoom = 8) {
   if (!map || !marker) return;
   const pos = { lat, lng };
   setMapViewAroundPin(lat, lng, MAP_PIN_VIEW_MILES);
-  marker.position = pos; // AdvancedMarkerElement
+  marker.setLatLng([lat, lng]);
   setValue("coord", `${lat.toFixed(6)},${lng.toFixed(6)}`);
   saveSettingsToStorage();
 }
@@ -54,17 +54,31 @@ function computeMapZoomForMiles(lat, miles, widthPx, heightPx) {
 function setMapViewAroundPin(lat, lng, miles = 20) {
   if (!map) return;
 
-  const mapDiv = map.getDiv?.();
+  const mapDiv = map.getContainer?.();
   const zoom = computeMapZoomForMiles(lat, miles, mapDiv?.clientWidth, mapDiv?.clientHeight);
 
-  map.setCenter({ lat, lng });
-  map.setZoom(zoom);
+  map.setView([lat, lng], zoom, { animate: false });
+}
 
-  // Reapply once after map settles to avoid startup/layout race causing inconsistent zoom.
-  google.maps.event.addListenerOnce(map, "idle", () => {
-    map.setCenter({ lat, lng });
-    map.setZoom(zoom);
-  });
+function applyLeafletBaseLayer() {
+  if (!map) return;
+  const isLight = getBool("light", false);
+  const url = isLight
+    ? "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+    : "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
+
+  const opts = {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    subdomains: "abcd",
+    maxZoom: 21,
+  };
+
+  if (tileLayer) {
+    tileLayer.setUrl(url);
+    return;
+  }
+
+  tileLayer = L.tileLayer(url, opts).addTo(map);
 }
 
 function toUpperCity(value) {
@@ -119,115 +133,140 @@ function syncInfoInputToUppercase() {
 }
 
 async function setupAddressSearch() {
-  if (!window.google?.maps?.places) return;
+  const input = document.getElementById("search");
+  const suggestionsEl = document.getElementById("search-suggestions");
+  if (!input || !suggestionsEl) return;
 
-  const searchHost =
-    document.getElementById("search-host") ||
-    document.getElementById("search")?.parentElement ||
-    document.body;
+  let debounceTimer = null;
+  let latestQuery = "";
 
-  const oldInput = document.getElementById("search");
-  if (oldInput) oldInput.style.display = "none";
+  const cityFromAddress = (address, fallback = "") => {
+    const city =
+      address?.city ||
+      address?.town ||
+      address?.village ||
+      address?.hamlet ||
+      address?.county ||
+      address?.state ||
+      fallback;
+    return toUpperCity(city);
+  };
 
-  const placeEl = new google.maps.places.PlaceAutocompleteElement({});
-  placeEl.id = "place-autocomplete";
-  placeEl.style.width = "320px";
-  searchHost.appendChild(placeEl);
+  const clearSuggestions = () => {
+    suggestionsEl.innerHTML = "";
+    suggestionsEl.style.display = "none";
+  };
 
-  placeEl.addEventListener("gmp-select", async (ev) => {
+  const applySuggestion = async (item) => {
+    const lat = Number(item?.lat);
+    const lng = Number(item?.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+    applyMapLocation(lat, lng, 10);
+    await applyTimezoneForLocation(lat, lng);
+
+    const city = cityFromAddress(item?.address, item?.display_name?.split(",")?.[0] || "");
+    if (city) {
+      LAST_PLACE_LABEL = city;
+      const infoEl = document.getElementById("info");
+      if (infoEl) infoEl.value = city;
+    }
+
+    input.value = item?.display_name || input.value;
+    clearSuggestions();
+    saveSettingsToStorage();
+  };
+
+  const fetchSuggestions = async (query) => {
+    const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=6&q=${encodeURIComponent(query)}`;
+    const res = await fetch(url, {
+      headers: { "Accept": "application/json" },
+      cache: "no-store",
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
+  };
+
+  input.addEventListener("input", () => {
+    const query = String(input.value || "").trim();
+    latestQuery = query;
+
+    if (debounceTimer) clearTimeout(debounceTimer);
+    if (query.length < 2) {
+      clearSuggestions();
+      return;
+    }
+
+    debounceTimer = setTimeout(async () => {
+      try {
+        const items = await fetchSuggestions(query);
+        if (latestQuery !== query) return;
+
+        suggestionsEl.innerHTML = "";
+        if (!items.length) {
+          clearSuggestions();
+          return;
+        }
+
+        for (const item of items) {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.textContent = item.display_name || `${item.lat}, ${item.lon}`;
+          btn.addEventListener("click", () => applySuggestion(item));
+          suggestionsEl.appendChild(btn);
+        }
+        suggestionsEl.style.display = "block";
+      } catch (e) {
+        console.warn("Search suggestions failed:", e);
+        clearSuggestions();
+      }
+    }, 250);
+  });
+
+  input.addEventListener("keydown", async (ev) => {
+    if (ev.key !== "Enter") return;
+    ev.preventDefault();
+    const first = suggestionsEl.querySelector("button");
+    if (first) {
+      first.click();
+      return;
+    }
+    const query = String(input.value || "").trim();
+    if (query.length < 2) return;
     try {
-      const prediction = ev?.placePrediction || ev?.detail?.placePrediction;
-      if (!prediction) {
-        console.warn("[gmp-select] no prediction in event", ev);
-        return;
-      }
-
-      const quick = toUpperCity(
-        prediction?.mainText?.text ||
-        String(prediction?.mainText || "") ||
-        String(prediction?.text?.text || "") ||
-        String(prediction?.text || "")
-      );
-      if (quick) {
-        LAST_PLACE_LABEL = quick;
-        const infoEl = document.getElementById("info");
-        if (infoEl) infoEl.value = quick;
-        saveSettingsToStorage();
-      }
-
-      const place = prediction.toPlace();
-      await place.fetchFields({
-        fields: ["location", "displayName", "formattedAddress", "addressComponents"],
-      });
-
-      if (place?.location) {
-        const lat = place.location.lat();
-        const lng = place.location.lng();
-        applyMapLocation(lat, lng, 10);
-        applyTimezoneForLocation(lat, lng); // auto-set UTC + summertime
-      }
-
-      const refined = extractCityLabel(place, prediction);
-      if (refined) {
-        LAST_PLACE_LABEL = refined;
-        const infoEl = document.getElementById("info");
-        if (infoEl) infoEl.value = refined;
-        saveSettingsToStorage();
-      }
+      const items = await fetchSuggestions(query);
+      if (items[0]) await applySuggestion(items[0]);
     } catch (e) {
-      console.warn("Place selection failed:", e);
+      console.warn("Search selection failed:", e);
     }
   });
 
-  placeEl.addEventListener("gmp-placeselect", async (ev) => {
-    try {
-      const place = ev?.place || ev?.detail?.place;
-      if (!place) return;
-
-      if (typeof place.fetchFields === "function") {
-        await place.fetchFields({
-          fields: ["location", "displayName", "formattedAddress", "addressComponents"],
-        });
-      }
-
-      if (place?.location) {
-        applyMapLocation(place.location.lat(), place.location.lng(), 10);
-      }
-
-      const city = extractCityLabel(place, null);
-      console.log("[gmp-placeselect] city:", city);
-      if (city) {
-        LAST_PLACE_LABEL = city;
-        const infoEl = document.getElementById("info");
-        if (infoEl) infoEl.value = city;
-        saveSettingsToStorage();
-      }
-    } catch (e) {
-      console.warn("Place selection failed:", e);
-    }
+  document.addEventListener("click", (ev) => {
+    if (ev.target === input || suggestionsEl.contains(ev.target)) return;
+    clearSuggestions();
   });
 }
 
-const GOOGLE_MAP_ID = "YOUR_MAP_ID";
-const GOOGLE_MAPS_API_KEY = "AIzaSyBh0ZOoRiOk40Ny_1FczvOU9QQK0eYvyvk"; // This is a browser key with referrer restrictions, safe to expose
-
 async function reverseGeocode(lat, lng) {
   try {
-    const { Geocoder } = await google.maps.importLibrary("geocoding");
-    const geocoder = new Geocoder();
-    const result = await geocoder.geocode({ location: { lat, lng } });
-    const place = result?.results?.[0];
-    if (!place) return "";
+    const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&addressdetails=1&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}`;
+    const res = await fetch(url, {
+      headers: { "Accept": "application/json" },
+      cache: "no-store",
+    });
+    if (!res.ok) return "";
 
-    const comps = place.address_components || [];
-    const pick = (type) => comps.find((c) => c.types.includes(type));
-
+    const place = await res.json();
+    const address = place?.address || {};
     const city =
-      pick("locality")?.long_name ||
-      pick("postal_town")?.long_name ||
-      pick("administrative_area_level_2")?.long_name ||
-      pick("administrative_area_level_1")?.long_name ||
-      place.formatted_address?.split(",")[0] ||
+      address.city ||
+      address.town ||
+      address.village ||
+      address.hamlet ||
+      address.county ||
+      address.state ||
+      String(place?.display_name || "").split(",")[0] ||
       "";
 
     return toUpperCity(city);
@@ -299,46 +338,21 @@ function parseOffsetFromParts(parts) {
 
 async function getTimezoneForLocation(lat, lng) {
   try {
-    // Use Geocoding API to get IANA timezone name from the location
-    const { Geocoder } = await google.maps.importLibrary("geocoding");
-    const geocoder = new Geocoder();
-    const result = await geocoder.geocode({ location: { lat, lng } });
+    const tzUrl = `https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(lat)}&longitude=${encodeURIComponent(lng)}&timezone=auto&current=temperature_2m`;
+    const tzRes = await fetch(tzUrl, { cache: "no-store" });
+    const tzData = tzRes.ok ? await tzRes.json() : null;
+    const tzName = String(tzData?.timezone || "").trim();
 
-    // Extract country code to help guess timezone
-    const comps = result?.results?.[0]?.address_components || [];
-    const country = comps.find((c) => c.types.includes("country"))?.short_name || "";
-    const adminArea = comps.find((c) => c.types.includes("administrative_area_level_1"))?.long_name || "";
-
-    // Use Intl to find matching timezone by testing candidate zones
-    const allZones = Intl.supportedValuesOf("timeZone");
-    const candidates = allZones.filter((z) =>
-      z.toLowerCase().includes(country.toLowerCase()) ||
-      z.toLowerCase().includes(adminArea.toLowerCase().replace(/\s+/g, "_"))
-    );
-
-    // Find the zone whose UTC offset best matches the geographic longitude
-    // Rough estimate: longitude / 15 = UTC offset in hours
-    const roughUtc = Math.round(lng / 15);
     const dateRaw = toDdMmYyyyFromPicker(getValue("datePicker")) || getValue("date", "01.01.2000");
     const parts = dateRaw.split(".");
     const testDate = new Date(Date.UTC(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]), 12));
 
-    // Check all zones for one matching the rough UTC offset
-    const matchingZone = allZones.find((z) => {
-      try {
-        const fmt = new Intl.DateTimeFormat("en-GB", {
-          timeZone: z,
-          timeZoneName: "shortOffset",
-        });
-        const tzStr = fmt.formatToParts(testDate).find((p) => p.type === "timeZoneName")?.value || "";
-        const m = /GMT([+-])(\d+)/.exec(tzStr);
-        if (!m) return roughUtc === 0;
-        const offset = (m[1] === "-" ? -1 : 1) * Number(m[2]);
-        return offset === roughUtc;
-      } catch { return false; }
-    }) || Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (tzName) {
+      return getUtcOffsetAndDstForZone(tzName, testDate, Number(parts[2]));
+    }
 
-    return getUtcOffsetAndDstForZone(matchingZone, testDate, Number(parts[2]));
+    const roughUtc = Math.round(lng / 15);
+    return { utc: roughUtc, summertime: false };
   } catch (e) {
     console.warn("getTimezoneForLocation failed:", e.message);
     // Fallback: estimate from longitude
@@ -424,19 +438,16 @@ window.initMap = async function () {
   const mapEl = document.getElementById("map");
   const initialZoom = computeMapZoomForMiles(center.lat, MAP_PIN_VIEW_MILES, mapEl?.clientWidth, mapEl?.clientHeight);
 
-  map = new google.maps.Map(mapEl, {
-    center,
-    zoom: initialZoom,
-    mapId: GOOGLE_MAP_ID,
-    isFractionalZoomEnabled: true,
-  });
+  map = L.map(mapEl, {
+    zoomControl: true,
+    preferCanvas: true,
+  }).setView([center.lat, center.lng], initialZoom);
 
-  const { AdvancedMarkerElement } = await google.maps.importLibrary("marker");
-  marker = new AdvancedMarkerElement({
-    map,
-    position: center,
+  applyLeafletBaseLayer();
+
+  marker = L.marker([center.lat, center.lng], {
     title: "Selected location",
-  });
+  }).addTo(map);
 
   // Ensure the same miles-based zoom is applied immediately on initial load.
   setMapViewAroundPin(center.lat, center.lng, MAP_PIN_VIEW_MILES);
@@ -451,9 +462,9 @@ window.initMap = async function () {
     }
   }
 
-  map.addListener("click", async (e) => {
-    const lat = e.latLng.lat();
-    const lng = e.latLng.lng();
+  map.on("click", async (e) => {
+    const lat = e.latlng.lat;
+    const lng = e.latlng.lng;
     applyMapLocation(lat, lng, map.getZoom());
 
     const [city] = await Promise.all([
@@ -1347,6 +1358,7 @@ function bindThemeDefaultHandlers() {
   if (lightEl) {
     lightEl.addEventListener("change", () => {
       applyThemeColorDefaults(false);
+      applyLeafletBaseLayer();
     });
   }
 
@@ -1393,3 +1405,9 @@ function bindZoomOutSlider() {
   input.addEventListener("change", sync);
   sync();
 }
+
+document.addEventListener("DOMContentLoaded", () => {
+  window.initMap().catch((e) => {
+    console.error("Map initialization failed:", e);
+  });
+});

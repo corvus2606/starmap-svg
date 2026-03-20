@@ -5,6 +5,12 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Starmap-SVG Web</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>✨</text></svg>">
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
   <style>
     :root{
       --bg: #f5f7fb;
@@ -70,6 +76,45 @@
       border-radius: 12px;
       border: 1px solid var(--border);
       overflow: hidden;
+    }
+
+    .search-wrap {
+      position: relative;
+    }
+
+    #search-suggestions {
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      right: 0;
+      z-index: 1200;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: var(--shadow);
+      max-height: 260px;
+      overflow-y: auto;
+      display: none;
+    }
+
+    #search-suggestions button {
+      width: 100%;
+      text-align: left;
+      border: 0;
+      border-bottom: 1px solid var(--border);
+      border-radius: 0;
+      background: transparent;
+      color: var(--text);
+      padding: 10px;
+      font-weight: 500;
+    }
+
+    #search-suggestions button:last-child {
+      border-bottom: 0;
+    }
+
+    #search-suggestions button:hover {
+      background: var(--panel-2);
     }
 
     .row {
@@ -207,8 +252,9 @@
     <h1>Starmap-SVG Web</h1>
     <h3>Generate custom starmap SVGs for any location and time, right in your browser.</h3>
     <!--<h4>A Java port of <a href="https://github.com/skeletor-git/starmap-svg" target="_blank">Starmap-SVG by Skeletor-git</a></h4>-->
-    <div class="row">
+    <div class="row search-wrap" id="search-host">
       <input id="search" placeholder="Search city/place" size="32" />
+      <div id="search-suggestions" role="listbox" aria-label="Search suggestions"></div>
     </div>
 
     <div id="map"></div>
@@ -336,9 +382,11 @@
 
     <div id="preview"></div>
   </main>
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
   <script src="app.js"></script>
-  <script async
-    src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBh0ZOoRiOk40Ny_1FczvOU9QQK0eYvyvk&libraries=places&loading=async&callback=initMap&v=weekly">
-  </script>
 </body>
 </html>
