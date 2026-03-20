@@ -399,8 +399,8 @@ async function loadConstellationSegments(stars) {
 
   // Skip JSON probes entirely - load TXT only from known path
   const txt = await fetchFirstText([
-    "./datafiles/constellation_lines.txt",
-    "./constellation_lines.txt",
+    "https://corvus2606.github.io/starmap-svg/datafiles/constellation_lines.txt",
+    "https://corvus2606.github.io/starmap-svg/constellation_lines.txt",
   ]);
 
   if (txt) {
@@ -529,7 +529,7 @@ function generateGuidesPy(opts) {
 function buildSvg(stars, opts) {
   const width = opts.width;
   const height = opts.height;
-  const border = opts.border;
+  const border = opts.border ?? opts.borders ?? 14; // accept either key
   const cx = width / 2;
   const cy = height / 2;
   const radius = Math.min(width, height) / 2 - border;
@@ -543,16 +543,15 @@ function buildSvg(stars, opts) {
   pieces.push(`<rect width="100%" height="100%" fill="${bg}"/>`);
 
   if (opts.guides) {
-    // Replace cross/circle with Python-parity guide dot cloud
-    const guideDots = generateGuidesPy(opts);
+    const guideDots = generateGuidesPy({ ...opts, borders: border });
     for (const d of guideDots) {
+      if (!Number.isFinite(d.x) || !Number.isFinite(d.y) || !Number.isFinite(d.r)) continue;
       pieces.push(
         `<circle cx="${d.x.toFixed(2)}" cy="${d.y.toFixed(2)}" r="${d.r.toFixed(2)}" fill="${guide}" />`
       );
     }
   }
 
-  // Constellation lines
   if (opts.constellation && Array.isArray(opts.constellationSegments)) {
     for (const [a, b] of opts.constellationSegments) {
       const pa = eqToAltAz(Number(a.ra), Number(a.dec), opts.lat, opts.lon, opts.dateUtc);
@@ -560,6 +559,7 @@ function buildSvg(stars, opts) {
       const A = projectToMap(pa.altDeg, pa.azRad, radius, opts.fullview);
       const B = projectToMap(pb.altDeg, pb.azRad, radius, opts.fullview);
       if (!A || !B) continue;
+      if (!Number.isFinite(A.x) || !Number.isFinite(A.y) || !Number.isFinite(B.x) || !Number.isFinite(B.y)) continue;
       pieces.push(`<line x1="${(cx + A.x).toFixed(2)}" y1="${(cy + A.y).toFixed(2)}" x2="${(cx + B.x).toFixed(2)}" y2="${(cy + B.y).toFixed(2)}" stroke="${fg}" stroke-width="0.6" opacity="0.75"/>`);
     }
   }
@@ -568,8 +568,9 @@ function buildSvg(stars, opts) {
     const pos = eqToAltAz(Number(s.ra), Number(s.dec), opts.lat, opts.lon, opts.dateUtc);
     const p = projectToMap(pos.altDeg, pos.azRad, radius, opts.fullview);
     if (!p) continue;
+    if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) continue;
     const r = starRadius(Number(s.mag), opts.magLimit, opts.aperture);
-    if (r <= 0) continue;
+    if (r <= 0 || !Number.isFinite(r)) continue;
     pieces.push(`<circle cx="${(cx + p.x).toFixed(2)}" cy="${(cy + p.y).toFixed(2)}" r="${r.toFixed(2)}" fill="${fg}" />`);
   }
 
@@ -663,7 +664,8 @@ document.getElementById("generate")?.addEventListener("click", async () => {
     const svg = buildSvg(stars, {
       lat, lon, utc, summertime, dateUtc, dateRaw, timeRaw,
       width, height,
-      borders: 10, // parity with Python default when no-info / guide geometry basis
+      border,   // consistent single key
+      borders: border,
       magLimit, aperture, fullview, guides, constellation, constellationSegments,
       light, noInfo, infoText
     });
