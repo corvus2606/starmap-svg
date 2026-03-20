@@ -9,10 +9,10 @@ import argparse
 font_style = "font-size:10px; letter-spacing:0.7px; font-family:sans-serif; stroke-width:4;"
 font_style2 = "font-size:2px; letter-spacing:0.7px; font-family:sans-serif; stroke-width:2;"
 
-background_color = "rgb(45,59,98)"
-line_color = "rgb(255,255,255)"
-star_color = "rgb(255,255,255)"
-constellation_color = "rgb(255,255,255)"
+background_color = "rgb(255,255,255)"#rgb(45,59,98)"
+line_color = "rgb(150,150,150)" #"rgb(255,255,255)"
+star_color = "rgb(0,0,0)" #"rgb(255,255,255)"
+constellation_color = "rgb(0,0,0)" #"rgb(255,255,255)"
 
 output_file = 'starmap.svg'
 
@@ -30,7 +30,7 @@ guides = False
 constellation = False
 
 #placetext for leftdown corner
-info = 'HELSINKI'
+info = ''
 
 #Size of poster in mm
 width = 200
@@ -123,7 +123,7 @@ parser.add_argument('-constellation','--constellation',nargs='?', help='show con
 parser.add_argument('-o','--output', help='output filename.svg',default='starmap.svg' )
 parser.add_argument('-width','--width',nargs='?', help='width in mm',type=int, default=width)
 parser.add_argument('-height','--height',nargs='?', help='height in mm',type=int, default=height)
-parser.add_argument('-info','--info', help='Info text example eame of the place', default=info )
+parser.add_argument('-info','--info', help='Info text example name of the place', default=info )
 
 
 args = parser.parse_args()
@@ -374,10 +374,11 @@ if __name__ == '__main__':
 	if constellation:
 		generate_constellations(northern,eastern,date,time)
 
-	#Text in bottom corner
-	image.add(image.text(info, insert=("20mm", str(height-21)+'mm'), fill=line_color, style=font_style))
-	image.add(image.text(str(northern)+" N "+str(eastern)+" E " , insert=("20mm", str(height-17)+'mm'), fill=line_color, style=font_style))
-	image.add(image.text(date +" "+ time+ " UTC " + str(utc), insert=("20mm", str(height-13)+'mm'), fill=line_color, style=font_style))
+	if (info != ''):
+		#Text in bottom corner
+		image.add(image.text(info, insert=("20mm", str(height-21)+'mm'), fill=line_color, style=font_style))
+		image.add(image.text(str(northern)+" N "+str(eastern)+" E " , insert=("20mm", str(height-17)+'mm'), fill=line_color, style=font_style))
+		image.add(image.text(date +" "+ time+ " UTC " + str(utc), insert=("20mm", str(height-13)+'mm'), fill=line_color, style=font_style))
 
 	image.save()
 	print(output_file ," generated")
