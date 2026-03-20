@@ -67,12 +67,12 @@ for generating svg starmaps from selected coordinates and time
 ## Example 1
 	python starmap.py -coord 60.186,24.959 -time 12.00.00 -date 01.01.2000 -constellation True -light
 
-![image](example/starmap.png)
+![image](example/starmap.svg)
 
 ## Example 2
 	python starmap.py -coord 35.684,139.728 -time 20.00.00 -date 15.07.2018 -guides True -magn 10.0 -width 150 -height 220
 
-![image](example/starmap2.png)
+![image](example/starmap2.svg)
 
 
 ## Info
