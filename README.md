@@ -5,12 +5,11 @@ for generating svg starmaps from selected coordinates and time
 - Python 3.10+
 - pip
 
-Install dependencies from file:
+## Install dependencies from file:
+	python -m pip install -r requirements.txt
 
-```python -m pip install -r requirements.txt```
-
-If needed, install directly:
-```python -m pip install svgwrite timezonefinder geopy tzdata```
+## If needed, install directly:
+	python -m pip install svgwrite timezonefinder geopy tzdata
 
 ## Usage
 
@@ -66,14 +65,14 @@ If needed, install directly:
   Disable printing the bottom-left info text block.
 
 ## Example 1
-	```python starmap.py -coord 60.186,24.959 -time 12.00.00 -date 01.01.2000 -constellation True -light```
+	python starmap.py -coord 60.186,24.959 -time 12.00.00 -date 01.01.2000 -constellation True -light
 
-![image](https://github.com/corvus2606/starmap-svg/blob/master/example/starmap.png)
+![image](example/starmap.png)
 
 ## Example 2
-	```python starmap.py -coord 35.684,139.728 -time 20.00.00 -date 15.07.2018 -guides True -magn 10.0 -width 150 -height 220```
+	python starmap.py -coord 35.684,139.728 -time 20.00.00 -date 15.07.2018 -guides True -magn 10.0 -width 150 -height 220
 
-![image](https://github.com/corvus2606/starmap-svg/blob/master/example/starmap2.png)
+![image](example/starmap2.png)
 
 
 ## Info
