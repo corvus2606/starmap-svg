@@ -18,33 +18,91 @@ let CATALOG_CACHE = null;
 let CONSTELLATION_CACHE = null;
 let CATALOG_SOURCE = "unknown";
 
-window.initMap = function () {
+function applyMapLocation(lat, lng, zoom = 8) {
+  if (!map || !marker) return;
+  const pos = { lat, lng };
+  map.setCenter(pos);
+  map.setZoom(zoom);
+  marker.position = pos; // AdvancedMarkerElement
+  setValue("coord", `${lat.toFixed(6)},${lng.toFixed(6)}`);
+}
+
+async function setupAddressSearch() {
+  if (!window.google?.maps?.places) return;
+
+  const searchHost =
+    document.getElementById("search-host") ||
+    document.getElementById("search")?.parentElement ||
+    document.body;
+
+  // Optional: remove old text input if present
+  const oldInput = document.getElementById("search");
+  if (oldInput) oldInput.style.display = "none";
+
+  // New Places web component
+  const placeEl = new google.maps.places.PlaceAutocompleteElement({
+    // optional component restrictions:
+    // componentRestrictions: { country: ["fi", "gb", "us"] },
+  });
+
+  placeEl.id = "place-autocomplete";
+  placeEl.style.width = "320px";
+  searchHost.appendChild(placeEl);
+
+  // New event shape (recommended)
+  placeEl.addEventListener("gmp-select", async (ev) => {
+    try {
+      const prediction = ev.placePrediction;
+      if (!prediction) return;
+      const place = prediction.toPlace();
+      await place.fetchFields({ fields: ["location", "displayName", "formattedAddress"] });
+      if (!place.location) return;
+      applyMapLocation(place.location.lat(), place.location.lng(), 10);
+    } catch (e) {
+      console.warn("Place selection failed:", e);
+    }
+  });
+
+  // Compatibility with earlier event payloads
+  placeEl.addEventListener("gmp-placeselect", async (ev) => {
+    try {
+      const place = ev.place;
+      if (!place) return;
+      if (typeof place.fetchFields === "function") {
+        await place.fetchFields({ fields: ["location"] });
+      }
+      if (!place.location) return;
+      applyMapLocation(place.location.lat(), place.location.lng(), 10);
+    } catch (e) {
+      console.warn("Place selection failed:", e);
+    }
+  });
+}
+
+window.initMap = async function () {
   const center = { lat: 60.186, lng: 24.959 };
-  map = new google.maps.Map(document.getElementById("map"), { center, zoom: 5 });
-  marker = new google.maps.Marker({ map, position: center });
+
+  map = new google.maps.Map(document.getElementById("map"), {
+    center,
+    zoom: 5,
+    // optional but recommended for AdvancedMarkerElement:
+    // mapId: "YOUR_MAP_ID"
+  });
+
+  const { AdvancedMarkerElement } = await google.maps.importLibrary("marker");
+  marker = new AdvancedMarkerElement({
+    map,
+    position: center,
+    title: "Selected location",
+  });
+
   setValue("coord", `${center.lat},${center.lng}`);
 
   map.addListener("click", (e) => {
-    const lat = e.latLng.lat();
-    const lng = e.latLng.lng();
-    marker.setPosition({ lat, lng });
-    setValue("coord", `${lat.toFixed(6)},${lng.toFixed(6)}`);
+    applyMapLocation(e.latLng.lat(), e.latLng.lng(), map.getZoom());
   });
 
-  const searchEl = document.getElementById("search");
-  if (searchEl) {
-    autocomplete = new google.maps.places.Autocomplete(searchEl);
-    autocomplete.addListener("place_changed", () => {
-      const p = autocomplete.getPlace();
-      if (!p.geometry) return;
-      const lat = p.geometry.location.lat();
-      const lng = p.geometry.location.lng();
-      map.setCenter({ lat, lng });
-      map.setZoom(8);
-      marker.setPosition({ lat, lng });
-      setValue("coord", `${lat.toFixed(6)},${lng.toFixed(6)}`);
-    });
-  }
+  await setupAddressSearch();
 };
 
 function setValue(id, value) {
@@ -74,19 +132,23 @@ function parseCoord(value) {
   return { lat, lon };
 }
 
-function parseDateTimeLocal(dateStr, timeStr) {
-  // DD.MM.YYYY + HH.MM.SS
-  const [dd, mm, yyyy] = dateStr.split(".").map(Number);
-  const [HH, MM, SS] = timeStr.split(".").map(Number);
-  if (![dd, mm, yyyy, HH, MM, SS].every(Number.isFinite)) throw new Error("Invalid date/time");
-  return new Date(Date.UTC(yyyy, mm - 1, dd, HH, MM, SS));
+function parseDottedDate(dateStr) {
+  const [dd, mm, yyyy] = String(dateStr).trim().split(".").map(Number);
+  if (![dd, mm, yyyy].every(Number.isFinite)) throw new Error("Invalid date format, expected DD.MM.YYYY");
+  return { dd, mm, yyyy };
+}
+
+function parseFlexibleTime(timeStr) {
+  // accepts HH.MM.SS or HH:MM:SS
+  const parts = String(timeStr).trim().replaceAll(":", ".").split(".").map(Number);
+  const [HH = 0, MM = 0, SS = 0] = parts;
+  if (![HH, MM, SS].every(Number.isFinite)) throw new Error("Invalid time format, expected HH.MM.SS");
+  return { HH, MM, SS };
 }
 
 function parseDateTimeToUtc(dateStr, timeStr, utcHours = 0, summertime = false) {
-  // DD.MM.YYYY + HH.MM.SS as local civil time -> UTC Date
-  const [dd, mm, yyyy] = dateStr.split(".").map(Number);
-  const [HH, MM, SS] = timeStr.split(".").map(Number);
-  if (![dd, mm, yyyy, HH, MM, SS].every(Number.isFinite)) throw new Error("Invalid date/time");
+  const { dd, mm, yyyy } = parseDottedDate(dateStr);
+  const { HH, MM, SS } = parseFlexibleTime(timeStr);
   const offset = Number(utcHours || 0) + (summertime ? 1 : 0);
   return new Date(Date.UTC(yyyy, mm - 1, dd, HH - offset, MM, SS));
 }
@@ -99,49 +161,53 @@ function julianDate(dateUtc) {
   return dateUtc.getTime() / 86400000 + 2440587.5;
 }
 
-function gmstHours(dateUtc) {
+function localSiderealHours(dateUtc, lonDeg) {
+  // Meeus-style GMST -> LST
   const jd = julianDate(dateUtc);
-  const T = (jd - 2451545.0) / 36525.0;
-  let gmst = 280.46061837 + 360.98564736629 * (jd - 2451545.0) + 0.000387933 * T * T - (T * T * T) / 38710000.0;
-  gmst = ((gmst % 360) + 360) % 360;
-  return gmst / 15.0;
+  const d = jd - 2451545.0;
+  const gmst = mod(18.697374558 + 24.06570982441908 * d, 24);
+  return mod(gmst + lonDeg / 15.0, 24);
 }
 
 function eqToAltAz(raHours, decDeg, latDeg, lonDeg, dateUtc) {
-  const lst = (gmstHours(dateUtc) + lonDeg / 15 + 24) % 24;
-  let haHours = lst - raHours;
-  if (haHours < -12) haHours += 24;
-  if (haHours > 12) haHours -= 24;
+  const lst = localSiderealHours(dateUtc, lonDeg);
+  let haDeg = (lst - raHours) * 15.0;
+  haDeg = mod(haDeg + 180, 360) - 180; // [-180, 180)
 
-  const ha = degToRad(haHours * 15);
+  const ha = degToRad(haDeg);
   const dec = degToRad(decDeg);
   const lat = degToRad(latDeg);
 
   const sinAlt = Math.sin(dec) * Math.sin(lat) + Math.cos(dec) * Math.cos(lat) * Math.cos(ha);
   const alt = Math.asin(clamp(sinAlt, -1, 1));
 
-  const cosAz = (Math.sin(dec) - Math.sin(alt) * Math.sin(lat)) / (Math.cos(alt) * Math.cos(lat) || 1e-12);
-  let az = Math.acos(clamp(cosAz, -1, 1));
-  if (Math.sin(ha) > 0) az = 2 * Math.PI - az;
+  // azimuth from north, eastward
+  const y = Math.sin(ha);
+  const x = Math.cos(ha) * Math.sin(lat) - Math.tan(dec) * Math.cos(lat);
+  let az = Math.atan2(y, x) + Math.PI; // [0, 2pi)
 
   return { altDeg: radToDeg(alt), azRad: az };
 }
 
 function projectToMap(altDeg, azRad, radius, fullview) {
   if (!fullview && altDeg < 0) return null;
-  // Zenithal-like projection: horizon circle when fullview=false, extended when true
-  const z = degToRad(90 - altDeg); // zenith distance
-  const zMax = fullview ? Math.PI : Math.PI / 2;
-  const r = (z / zMax) * radius;
-  return {
-    x: r * Math.sin(azRad),
-    y: -r * Math.cos(azRad),
-  };
+
+  // azimuthal equidistant projection (closer to printed planisphere style)
+  const zenithDeg = 90 - altDeg; // 0 at zenith, 90 at horizon
+  const maxZenith = fullview ? 180 : 90;
+  const r = (zenithDeg / maxZenith) * radius;
+
+  // Keep north up
+  const x = r * Math.sin(azRad);
+  const y = -r * Math.cos(azRad);
+  return { x, y };
 }
 
 function starRadius(mag, magLimit, aperture) {
   if (mag > magLimit) return 0;
-  return Math.max(0.3, (magLimit - mag + 0.6) * aperture);
+  // closer to original script behavior (sharper dynamic range)
+  const v = (magLimit - mag + 0.8) * aperture;
+  return Math.max(0.2, Math.min(4.5, v));
 }
 
 function normalizeStar(raw, idx = 0) {
@@ -408,7 +474,7 @@ function buildSvg(stars, opts) {
     pieces.push(`<line x1="${cx}" y1="${cy - radius}" x2="${cx}" y2="${cy + radius}" stroke="${guide}" stroke-width="1"/>`);
   }
 
-  // Constellation lines first (behind stars)
+  // Constellation lines
   if (opts.constellation && Array.isArray(opts.constellationSegments)) {
     for (const [a, b] of opts.constellationSegments) {
       const pa = eqToAltAz(Number(a.ra), Number(a.dec), opts.lat, opts.lon, opts.dateUtc);
@@ -416,9 +482,7 @@ function buildSvg(stars, opts) {
       const A = projectToMap(pa.altDeg, pa.azRad, radius, opts.fullview);
       const B = projectToMap(pb.altDeg, pb.azRad, radius, opts.fullview);
       if (!A || !B) continue;
-      pieces.push(
-        `<line x1="${(cx + A.x).toFixed(2)}" y1="${(cy + A.y).toFixed(2)}" x2="${(cx + B.x).toFixed(2)}" y2="${(cy + B.y).toFixed(2)}" stroke="${fg}" stroke-width="0.6" opacity="0.75"/>`
-      );
+      pieces.push(`<line x1="${(cx + A.x).toFixed(2)}" y1="${(cy + A.y).toFixed(2)}" x2="${(cx + B.x).toFixed(2)}" y2="${(cy + B.y).toFixed(2)}" stroke="${fg}" stroke-width="0.6" opacity="0.75"/>`);
     }
   }
 
@@ -432,9 +496,11 @@ function buildSvg(stars, opts) {
   }
 
   if (!opts.noInfo) {
+    const ns = opts.lat >= 0 ? "N" : "S";
+    const ew = opts.lon >= 0 ? "E" : "W";
     pieces.push(`<text x="16" y="${height - 30}" fill="${fg}" font-size="10" font-family="sans-serif">${escapeXml(opts.infoText)}</text>`);
-    pieces.push(`<text x="16" y="${height - 18}" fill="${fg}" font-size="10" font-family="sans-serif">${opts.lat.toFixed(4)} N ${opts.lon.toFixed(4)} E</text>`);
-    pieces.push(`<text x="16" y="${height - 6}" fill="${fg}" font-size="10" font-family="sans-serif">${opts.dateRaw} ${opts.timeRaw}</text>`);
+    pieces.push(`<text x="16" y="${height - 18}" fill="${fg}" font-size="10" font-family="sans-serif">${Math.abs(opts.lat).toFixed(4)} ${ns} ${Math.abs(opts.lon).toFixed(4)} ${ew}</text>`);
+    pieces.push(`<text x="16" y="${height - 6}" fill="${fg}" font-size="10" font-family="sans-serif">${opts.dateRaw} ${opts.timeRaw} UTC ${opts.utc}</text>`);
   }
 
   pieces.push(`</svg>`);
@@ -473,10 +539,10 @@ document.getElementById("generate")?.addEventListener("click", async () => {
 
     const stars = await loadCatalog();
     console.log(`Catalog source: ${CATALOG_SOURCE}, stars: ${stars.length}`);
-    const constellationSegments = constellation ? await loadConstellationSegments(stars) : [];
 
+    const constellationSegments = constellation ? await loadConstellationSegments(stars) : [];
     const svg = buildSvg(stars, {
-      lat, lon, dateUtc, dateRaw, timeRaw,
+      lat, lon, utc, dateUtc, dateRaw, timeRaw,
       width, height, border: 14, magLimit, aperture,
       fullview, guides, constellation, constellationSegments,
       light, noInfo, infoText
