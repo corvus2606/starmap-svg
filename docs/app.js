@@ -395,46 +395,10 @@ async function loadConstellationSegments(stars) {
   if (CONSTELLATION_CACHE) return CONSTELLATION_CACHE;
 
   const lookup = buildStarLookup(stars);
-
-  // 1) JSON preferred: [[hr1,hr2], ...] or [{a:..,b:..}, ...]
-  const json = await fetchFirstJson([
-    "./constellation_lines.json",
-    "./data/constellation_lines.json",
-    "../datafiles/constellation_lines.json",
-  ]);
-
   const segments = [];
-  if (Array.isArray(json)) {
-    for (const row of json) {
-      let aRef, bRef;
-      if (Array.isArray(row) && row.length >= 2) {
-        [aRef, bRef] = row;
-      } else if (row && typeof row === "object") {
-        aRef = row.a ?? row.from ?? row.hr1 ?? row[0];
-        bRef = row.b ?? row.to ?? row.hr2 ?? row[1];
-      }
-      if (aRef == null || bRef == null) continue;
 
-      const aNum = Number(aRef), bNum = Number(bRef);
-      let a = null, b = null;
-      if (Number.isFinite(aNum) && Number.isFinite(bNum)) {
-        a = lookup.byHr.get(aNum);
-        b = lookup.byHr.get(bNum);
-      } else {
-        a = lookup.byName.get(String(aRef).toLowerCase());
-        b = lookup.byName.get(String(bRef).toLowerCase());
-      }
-      if (a && b) segments.push([a, b]);
-    }
-    if (segments.length) {
-      CONSTELLATION_CACHE = segments;
-      return CONSTELLATION_CACHE;
-    }
-  }
-
-  // 2) TXT fallback
+  // Skip JSON probes entirely - load TXT only from known path
   const txt = await fetchFirstText([
-    "../datafiles/constellation_lines.txt",
     "./datafiles/constellation_lines.txt",
     "./constellation_lines.txt",
   ]);
@@ -446,6 +410,7 @@ async function loadConstellationSegments(stars) {
     }
   }
 
+  console.log(`Constellation segments loaded: ${segments.length}`);
   CONSTELLATION_CACHE = segments;
   return CONSTELLATION_CACHE;
 }
@@ -492,11 +457,15 @@ function pyAngleBetween(north, east, dec_angle, ra_angle) {
 }
 
 function pyStereographic(latitude0, longitude0, latitude, longitude, R) {
-  const k =
-    (2 * R) /
-    (1 +
-      Math.sin(latitude0) * Math.sin(latitude) +
-      Math.cos(latitude0) * Math.cos(latitude) * Math.cos(longitude - longitude0));
+  const denom =
+    1 +
+    Math.sin(latitude0) * Math.sin(latitude) +
+    Math.cos(latitude0) * Math.cos(latitude) * Math.cos(longitude - longitude0);
+
+  // Guard against division by zero / near-zero
+  if (Math.abs(denom) < 1e-10) return { x: 0, y: 0 };
+
+  const k = (2 * R) / denom;
 
   const x = k * Math.cos(latitude) * Math.sin(longitude - longitude0);
   const y =
@@ -508,12 +477,12 @@ function pyStereographic(latitude0, longitude0, latitude, longitude, R) {
 }
 
 function generateGuidesPy(opts) {
-  // Exact parity with Python generate_starmap() guide generation
   const N = degToRad(opts.lat);
   const E = degToRad(opts.lon);
   const raddatetime = pyDateAndTimeToRad(opts.dateRaw, opts.timeRaw, opts.utc, opts.summertime);
 
-  const R = opts.width - opts.borders;
+  // Match Python: R is based on min dimension / 2 minus border
+  const R = Math.min(opts.width, opts.height) / 2 - opts.borders;
   const halfX = opts.width / 2;
   const halfY = opts.height / 2;
 
@@ -542,6 +511,10 @@ function generateGuidesPy(opts) {
     const angle_from_viewpoint = pyAngleBetween(N, E, declination, ascension);
     if (angle_from_viewpoint <= maxAngle || opts.fullview) {
       const { x, y } = pyStereographic(N, E, declination, ascension, R);
+
+      // Guard against NaN/Infinity before pushing
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+
       dots.push({
         x: halfX - x,
         y: halfY - y,
@@ -638,6 +611,22 @@ function toHhMmSsFromPicker(v) {
   const ss = parts[2] ?? "00";
   return `${hh}.${mm}.${ss}`;
 }
+
+function setDefaultDateTime() {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const dd = String(now.getDate()).padStart(2, "0");
+
+  const dateEl = document.getElementById("datePicker");
+  const timeEl = document.getElementById("timePicker");
+
+  if (dateEl && !dateEl.value) dateEl.value = `${yyyy}-${mm}-${dd}`;
+  if (timeEl && !timeEl.value) timeEl.value = "09:00:00";
+}
+
+// call on load
+setDefaultDateTime();
 
 document.getElementById("generate")?.addEventListener("click", async () => {
   try {
