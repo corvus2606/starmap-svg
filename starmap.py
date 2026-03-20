@@ -241,6 +241,7 @@ if args.no_info:
 	borders = 10
 else:
 	info = args.info.strip() if args.info else ""
+	info = info.upper()
 	if info == "":
 		info = detect_city_name(northern, eastern)
 	borders = 50

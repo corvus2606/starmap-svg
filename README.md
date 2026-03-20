@@ -74,6 +74,10 @@ for generating svg starmaps from selected coordinates and time
 
 ![image](example/starmap2.svg)
 
+## Example 3
+	python starmap.py -coord 35.684,139.728 -time 20.00.00 -date 15.07.2018 -info Tokyo -guides True -magn 10.0 -width 150 -height 220
+
+![image](example/starmap3.svg)
 
 ## Info
 
