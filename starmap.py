@@ -20,10 +20,10 @@ except ImportError:
 font_style = "font-size:10px; letter-spacing:0.7px; font-family:sans-serif; stroke-width:4;"
 font_style2 = "font-size:2px; letter-spacing:0.7px; font-family:sans-serif; stroke-width:2;"
 
-background_color = "rgb(255,255,255)"#rgb(45,59,98)"
-line_color = "rgb(180,180,180)" #"rgb(255,255,255)"
-star_color = "rgb(0,0,0)" #"rgb(255,255,255)"
-constellation_color = "rgb(0,0,0)" #"rgb(255,255,255)"
+light_background_color = "rgb(255,255,255)"#rgb(45,59,98)"
+light_line_color = "rgb(180,180,180)" #"rgb(255,255,255)"
+light_star_color = "rgb(0,0,0)" #"rgb(255,255,255)"
+light_constellation_color = "rgb(0,0,0)" #"rgb(255,255,255)"
 
 dark_background_color = "rgb(45,59,98)"
 dark_line_color = "rgb(255,255,255)"
@@ -181,14 +181,14 @@ def detect_city_name(lat, lon):
         if not location:
             return ""
         address = location.raw.get("address", {})
-        return (
+        return ((
             address.get("city")
             or address.get("town")
             or address.get("village")
             or address.get("municipality")
             or address.get("county")
             or ""
-        )
+        ).upper())
     except Exception as ex:
         print(f"city lookup failed ({ex})")
         return ""
@@ -259,12 +259,18 @@ if print_info:
 	print("City name:", info)
 
 # Set color scheme
-if not args.light:
+if args.light:
+	background_color = light_background_color
+	line_color = light_line_color
+	star_color = light_star_color
+	constellation_color = light_constellation_color
+else:
     background_color = dark_background_color
     line_color = dark_line_color
     star_color = dark_star_color
     constellation_color = dark_constellation_color
 
+print("Generating starmap with color scheme:", "light" if args.light else "dark")
 # ########## DRAWING FUNCTIONS  ###########################################
 
 # Generates random star shape to given coordinate and magnitude and color
