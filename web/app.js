@@ -309,15 +309,7 @@ async function fetchFirstJson(paths) {
 async function loadCatalog() {
   if (CATALOG_CACHE) return CATALOG_CACHE;
 
-  const json = await fetchFirstJson(["./stars.min.json", "./data/stars.min.json", "../data/stars.min.json"]);
-  if (Array.isArray(json) && json.length) {
-    CATALOG_CACHE = json.map((s, i) => normalizeStar(s, i)).filter(Boolean);
-    if (CATALOG_CACHE.length) {
-      CATALOG_SOURCE = "json";
-      return CATALOG_CACHE;
-    }
-  }
-
+  // Removed stars.min.json probe to avoid noisy 404 in production
   const ybscText = await fetchFirstText([
     "../datafiles/ybsc5.txt",
     "./datafiles/ybsc5.txt",
