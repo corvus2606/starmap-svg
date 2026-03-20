@@ -2,8 +2,11 @@
 for generating svg starmaps from selected coordinates and time 
 
 ## Requirements 
-- Python 3.10+
-- pip
+	Python 3.10+
+	svgwrite
+	timezonefinder
+	geopy
+	tzdata
 
 ## Install dependencies from file:
 	python -m pip install -r requirements.txt
