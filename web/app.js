@@ -615,11 +615,36 @@ function escapeXml(s) {
     .replaceAll("'", "&apos;");
 }
 
+function toDdMmYyyyFromPicker(v) {
+  // yyyy-mm-dd -> dd.mm.yyyy
+  if (!v) return "";
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+  if (!m) return v;
+  return `${m[3]}.${m[2]}.${m[1]}`;
+}
+
+function toHhMmSsFromPicker(v) {
+  // hh:mm or hh:mm:ss -> hh.mm.ss
+  if (!v) return "";
+  const parts = v.split(":");
+  const hh = parts[0] ?? "00";
+  const mm = parts[1] ?? "00";
+  const ss = parts[2] ?? "00";
+  return `${hh}.${mm}.${ss}`;
+}
+
 document.getElementById("generate")?.addEventListener("click", async () => {
   try {
     const { lat, lon } = parseCoord(getValue("coord", "60.186,24.959"));
-    const dateRaw = getValue("date", "01.01.2000");
-    const timeRaw = getValue("time", "12.00.00");
+
+    // Prefer picker inputs
+    const dateRaw =
+      toDdMmYyyyFromPicker(getValue("datePicker")) ||
+      getValue("date", "01.01.2000");
+
+    const timeRaw =
+      toHhMmSsFromPicker(getValue("timePicker")) ||
+      getValue("time", "12.00.00");
 
     const utc = Number(getValue("utc", "0")) || 0;
     const summertime = getBool("summertime", false);
