@@ -49,7 +49,7 @@
     }
 
     .wrap{
-      max-width: 1100px;
+      max-width: 1400px;
       margin: 24px auto;
       padding: 16px;
       background: var(--panel);
@@ -119,6 +119,12 @@
       background: var(--accent-hover);
     }
 
+    a#download[aria-disabled="true"] {
+      pointer-events: none;
+      opacity: .5;
+      cursor: not-allowed;
+    }
+
     #preview {
       margin-top: 12px;
       border: 1px solid var(--border);
@@ -126,6 +132,26 @@
       padding: 10px;
       min-height: 120px;
       background: var(--panel-2);
+    }
+
+    details {
+      margin: 12px 0;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--panel-2);
+    }
+
+    summary {
+      cursor: pointer;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    input[type="color"] {
+      width: 44px;
+      height: 38px;
+      padding: 4px;
     }
   </style>
 </head>
@@ -139,8 +165,9 @@
     <div id="map"></div>
 
     <div class="row">
-      <input id="coord" placeholder="lat,lon" value="60.186,24.959" />
-
+      <label>Coordinates:
+        <input id="coord" placeholder="lat,lon" value="60.186,24.959" />
+      </label>
       <!-- User-friendly pickers -->
       <label>Date:
         <input id="datePicker" type="date" />
@@ -148,27 +175,96 @@
       <label>Time:
         <input id="timePicker" type="time" step="1" />
       </label>
-
-      <input id="utc" type="number" step="0.5" value="0" title="UTC offset" />
-      <input id="info" placeholder="Info text (optional)" />
+      <label>UTC Offset:
+        <input id="utc" type="number" step="0.5" value="0" title="UTC offset" />
+      </label>
+      <label>Info:
+        <input id="info" placeholder="Info text (optional)" />
+      </label>
     </div>
-
-    <div class="row">
-      <label><input id="summertime" type="checkbox" /> summertime</label>
+    <div class="row" style="margin-top:10px;">
       <label><input id="guides" type="checkbox" /> guides</label>
       <label><input id="constellation" type="checkbox" /> constellation</label>
-      <label><input id="fullview" type="checkbox" /> fullview</label>
-      <label><input id="light" type="checkbox" /> light theme</label>
-      <label><input id="no-info" type="checkbox" /> no info</label>
+      <label><input type="checkbox" id="show-border" /> border</label>
+      <label><input type="checkbox" id="star-shape" /> star shapes</label>
     </div>
+    <details>
+      <summary>Advanced options</summary>
+      <div class="row" style="margin-top:10px;">
+        <label><input id="summertime" type="checkbox" /> summertime</label>
+        <!--<label><input id="fullview" type="checkbox" /> fullview</label>-->
+        <label><input id="light" type="checkbox" /> light theme</label>
+        <label><input id="no-info" type="checkbox" /> no info</label>
+      </div>
+
+      <div class="row">
+        <label>Magnitude
+          <input id="magn" type="number" step="0.1" value="5.7" title="Magnitude limit" />
+        </label>
+        <label>Aperture
+          <input id="aperture" type="number" step="0.1" value="0.4" title="Star size aperture" />
+        </label>
+        <label>
+          Star points
+          <input id="star-points" type="number" min="3" max="12" step="1" value="4" disabled />
+        </label>
+      </div>
+      <div class="row">
+        <label>Width
+          <input id="width" type="number" step="1" value="800" title="Output width" />
+        </label>
+        <label>Height
+          <input id="height" type="number" step="1" value="800" title="Output height" />
+        </label>
+      </div>
+
+      <div class="row">
+        <label>
+          <input id="bg-color" type="color" value="#2d3b62" />
+          Background
+        </label>
+      </div>
+
+      <div class="row">
+        <label>
+          <input id="star-color" type="color" value="#ffffff" />
+          Stars
+        </label>
+      </div>
+
+      <div class="row">
+        <label>
+          <input id="guide-color" type="color" value="#cfd6ff" />
+          Guides
+        </label>
+      </div>
+
+      <div class="row">
+        <label>
+          <input id="constellation-color" type="color" value="#ffffff" />
+          Constellation
+        </label>
+      </div>
+
+      <div class="row">
+        <label>
+          <input id="border-color" type="color" value="#ffffff" />
+          Border
+        </label>
+      </div>
+
+      <div class="row">
+        <label>
+          <input id="text-color" type="color" value="#ffffff" />
+          Text
+        </label>
+      </div>
+
+    </details>
 
     <div class="row">
-      <input id="magn" type="number" step="0.1" value="5.7" title="Magnitude limit" />
-      <input id="aperture" type="number" step="0.1" value="0.4" title="Star size aperture" />
-      <input id="width" type="number" step="1" value="800" title="Output width" />
-      <input id="height" type="number" step="1" value="800" title="Output height" />
       <button id="generate">Generate SVG</button>
-      <a id="download" download="starmap.svg">Download</a>
+      <a id="download" download="starmap.svg" aria-disabled="true">Download</a>
     </div>
 
     <div id="preview"></div>
