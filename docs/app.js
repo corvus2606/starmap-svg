@@ -158,6 +158,11 @@ function degToRad(d) { return (d * Math.PI) / 180; }
 function radToDeg(r) { return (r * 180) / Math.PI; }
 function clamp(x, a, b) { return Math.max(a, Math.min(b, x)); }
 
+// safe positive modulo helper (needed by sidereal calculations)
+function mod(a, n) {
+  return ((a % n) + n) % n;
+}
+
 function julianDate(dateUtc) {
   return dateUtc.getTime() / 86400000 + 2440587.5;
 }
