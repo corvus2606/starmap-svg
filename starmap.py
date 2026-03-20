@@ -208,7 +208,7 @@ parser.add_argument('-o','--output', help='output filename.svg',default='starmap
 parser.add_argument('-width','--width',nargs='?', help='width in mm',type=int, default=width)
 parser.add_argument('-height','--height',nargs='?', help='height in mm',type=int, default=height)
 parser.add_argument('-info','--info', help='Info text example name of the place', default=info )
-parser.add_argument('--no-info', action='store_true', help='disable printing info text block')
+parser.add_argument('-no-info','--no-info', action='store_true', help='disable printing info text block')
 parser.add_argument('-fullview','--fullview',nargs='?', help='show stars in full square',type=str_to_bool, default=fullview )
 parser.add_argument('-aperture','--aperture', nargs='?', help='aperture for star size (default 0.4, bigger = bigger starbursts)', type=float, default=aperture)
 parser.add_argument('-light', '--light', action='store_true', help='use light color scheme (white background, black stars)')

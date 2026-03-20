@@ -13,56 +13,38 @@ for generating svg starmaps from selected coordinates and time
 
 ## Usage
 
-```python .\starmap.py -h```
+	python .\starmap.py -h
 
-### Arguments
-
-- `-h, --help`  
-  Show help and exit.
-
-- `-coord COORD, --coord COORD`  
-  Coordinates in format `lat,lon` (example: `60.186,24.959`).
-
-- `-time TIME, --time TIME`  
-  Local time in format `HH.MM.SS`.
-
-- `-date DATE, --date DATE`  
-  Date in format `DD.MM.YYYY`.
-
-- `-utc [UTC], --utc [UTC]`  
-  UTC base offset for location (auto-detected if omitted).
-
-- `-summertime [SUMMERTIME], --summertime [SUMMERTIME]`  
-  DST/summertime override (`true/false`).  
-  If omitted, it is auto-detected from date/time/location when possible.
-
-- `-magn [MAGN], --magn [MAGN]`  
-  Magnitude limit (example range: `0.1` to `12.0`) bigger number means more stars.
-
-- `-guides [GUIDES], --guides [GUIDES]`  
-  Draw guides (`true/false`).
-
-- `-constellation [CONSTELLATION], --constellation [CONSTELLATION]`  
-  Show constellation lines (`true/false`).
-
-- `-fullview [FULLVIEW], --fullview [FULLVIEW]`  
-  Show stars in full square (`true/false`).
-
-- `-o OUTPUT, --output OUTPUT`  
-  Output filename (example: `starmap.svg`).
-
-- `-width [WIDTH], --width [WIDTH]`  
-  Output width in mm.
-
-- `-height [HEIGHT], --height [HEIGHT]`  
-  Output height in mm.
-
-- `-info INFO, --info INFO`  
-  Custom info text in the bottom-left corner.  
-  If omitted, city name can be auto-resolved from coordinates.
-
-- `--no-info`  
-  Disable printing the bottom-left info text block.
+	Optional Arguments:
+		-h, --help				Show help and exit.
+		-coord COORD, --coord COORD				  
+								Coordinates in format `lat,lon` (example: `60.186,24.959`).
+		-time TIME, --time TIME
+								time in format hour.minute.second
+		-date DATE, --date DATE
+	                        date in format day.month.year
+		-utc [UTC], --utc [UTC]
+	                        utc of your location -12 to +12 (Auto-detected if ommitted)
+	  	-magn [MAGN], --magn [MAGN]
+	                        magnitude limit 0.1-12.0
+	  	-summertime [SUMMERTIME], --summertime [SUMMERTIME]
+	                        if it is summertime on the date of the starchart (Auto-detected if ommitted)
+	  	-guides [GUIDES], --guides [GUIDES]
+	                        draw guides True/False
+	  	-constellation [CONSTELLATION], --constellation [CONSTELLATION]
+	                        show constellation True/False
+	  	-o OUTPUT, --output OUTPUT
+	                        output filename.svg
+	  	-width [WIDTH], --width [WIDTH]
+	                        width in mm
+	  	-height [HEIGHT], --height [HEIGHT]
+	                        height in mm
+	  	-info INFO, --info INFO
+	                        Info text example eame of the place (Auto-detected if ommitted)
+		-no-info, --no-info
+							disable printing the bottom-left info text block
+		-light, --light
+							use light color scheme (white background, black stars)
 
 ## Example 1
 	python starmap.py -coord 60.186,24.959 -time 12.00.00 -date 01.01.2000 -constellation True -light
