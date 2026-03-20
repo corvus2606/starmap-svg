@@ -79,14 +79,15 @@ async function setupAddressSearch() {
   });
 }
 
+const GOOGLE_MAP_ID = "YOUR_MAP_ID"; // create in Google Cloud -> Maps Management -> Map IDs
+
 window.initMap = async function () {
   const center = { lat: 60.186, lng: 24.959 };
 
   map = new google.maps.Map(document.getElementById("map"), {
     center,
     zoom: 5,
-    // optional but recommended for AdvancedMarkerElement:
-    // mapId: "YOUR_MAP_ID"
+    mapId: GOOGLE_MAP_ID,
   });
 
   const { AdvancedMarkerElement } = await google.maps.importLibrary("marker");
