@@ -22,8 +22,15 @@
 
   <div class="row">
     <input id="coord" placeholder="lat,lon" value="60.186,24.959" />
-    <input id="date" placeholder="DD.MM.YYYY" value="01.01.2000" />
-    <input id="time" placeholder="HH.MM.SS" value="12.00.00" />
+
+    <!-- User-friendly pickers -->
+    <label>Date:
+      <input id="datePicker" type="date" value="2000-01-01" />
+    </label>
+    <label>Time:
+      <input id="timePicker" type="time" step="1" value="12:00:00" />
+    </label>
+
     <input id="utc" type="number" step="0.5" value="0" title="UTC offset" />
     <input id="info" placeholder="Info text (optional)" />
   </div>

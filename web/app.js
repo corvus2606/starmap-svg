@@ -444,6 +444,109 @@ async function loadConstellationSegments(stars) {
   return CONSTELLATION_CACHE;
 }
 
+function pyDateAndTimeToRad(dateStr, timeStr, utc, summertime) {
+  // Exact parity with Python date_and_time_to_rad()
+  const epochyear = 2000.0;
+  const epochhour = 12.0;
+  const calculation_mistake = -5.1;
+  const days_in_year = 365.2425;
+  const months = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+  const year = Number(dateStr.slice(6, 10));
+  const month = Number(dateStr.slice(3, 5));
+  const day = Number(dateStr.slice(0, 2));
+
+  const hour = Number(timeStr.slice(0, 2));
+  const minute = Number(timeStr.slice(3, 5));
+  const second = Number(timeStr.slice(6, 8));
+
+  let daycounter = (year - epochyear) * days_in_year;
+  daycounter += months.slice(0, month - 1).reduce((a, b) => a + b, 0);
+  daycounter += day - 1;
+
+  let secondcounter = (hour - epochhour + calculation_mistake) * 3600;
+  secondcounter += minute * 60;
+  secondcounter += second;
+
+  if (summertime) secondcounter -= 3600;
+  secondcounter -= 3600 * Number(utc || 0);
+
+  let degree = mod(-(daycounter * 360.0 / days_in_year), 360);
+  degree -= mod((secondcounter * 360.0) / (24 * 60 * 60), 360);
+
+  return degToRad(degree);
+}
+
+function pyAngleBetween(north, east, dec_angle, ra_angle) {
+  const delta_ra = ra_angle - east;
+  const c =
+    Math.cos(delta_ra) * Math.cos(north) * Math.cos(dec_angle) +
+    Math.sin(north) * Math.sin(dec_angle);
+  return Math.acos(clamp(c, -1, 1));
+}
+
+function pyStereographic(latitude0, longitude0, latitude, longitude, R) {
+  const k =
+    (2 * R) /
+    (1 +
+      Math.sin(latitude0) * Math.sin(latitude) +
+      Math.cos(latitude0) * Math.cos(latitude) * Math.cos(longitude - longitude0));
+
+  const x = k * Math.cos(latitude) * Math.sin(longitude - longitude0);
+  const y =
+    k *
+    (Math.cos(latitude0) * Math.sin(latitude) -
+      Math.sin(latitude0) * Math.cos(latitude) * Math.cos(longitude - longitude0));
+
+  return { x, y };
+}
+
+function generateGuidesPy(opts) {
+  // Exact parity with Python generate_starmap() guide generation
+  const N = degToRad(opts.lat);
+  const E = degToRad(opts.lon);
+  const raddatetime = pyDateAndTimeToRad(opts.dateRaw, opts.timeRaw, opts.utc, opts.summertime);
+
+  const R = opts.width - opts.borders;
+  const halfX = opts.width / 2;
+  const halfY = opts.height / 2;
+
+  const dots = [];
+  const brightness = 1.1;
+  const maxAngle = degToRad(89);
+
+  const draw_guides = [];
+
+  for (let degrees = -3; degrees < 3; degrees++) {
+    for (let lines = 0; lines < 360; lines++) {
+      draw_guides.push([degrees * 30, lines]);
+    }
+  }
+
+  for (let hours = 0; hours < 24; hours++) {
+    for (let lines = -160; lines < 160; lines++) {
+      draw_guides.push([lines / 2.0, (hours / 24) * 360]);
+    }
+  }
+
+  for (const line of draw_guides) {
+    const ascension = degToRad(line[1]) + raddatetime;
+    const declination = degToRad(line[0]);
+
+    const angle_from_viewpoint = pyAngleBetween(N, E, declination, ascension);
+    if (angle_from_viewpoint <= maxAngle || opts.fullview) {
+      const { x, y } = pyStereographic(N, E, declination, ascension, R);
+      dots.push({
+        x: halfX - x,
+        y: halfY - y,
+        r: brightness * opts.aperture,
+      });
+    }
+  }
+
+  return dots;
+}
+
 function buildSvg(stars, opts) {
   const width = opts.width;
   const height = opts.height;
@@ -461,9 +564,13 @@ function buildSvg(stars, opts) {
   pieces.push(`<rect width="100%" height="100%" fill="${bg}"/>`);
 
   if (opts.guides) {
-    pieces.push(`<circle cx="${cx}" cy="${cy}" r="${radius}" fill="none" stroke="${guide}" stroke-width="1"/>`);
-    pieces.push(`<line x1="${cx - radius}" y1="${cy}" x2="${cx + radius}" y2="${cy}" stroke="${guide}" stroke-width="1"/>`);
-    pieces.push(`<line x1="${cx}" y1="${cy - radius}" x2="${cx}" y2="${cy + radius}" stroke="${guide}" stroke-width="1"/>`);
+    // Replace cross/circle with Python-parity guide dot cloud
+    const guideDots = generateGuidesPy(opts);
+    for (const d of guideDots) {
+      pieces.push(
+        `<circle cx="${d.x.toFixed(2)}" cy="${d.y.toFixed(2)}" r="${d.r.toFixed(2)}" fill="${guide}" />`
+      );
+    }
   }
 
   // Constellation lines
@@ -534,9 +641,10 @@ document.getElementById("generate")?.addEventListener("click", async () => {
 
     const constellationSegments = constellation ? await loadConstellationSegments(stars) : [];
     const svg = buildSvg(stars, {
-      lat, lon, utc, dateUtc, dateRaw, timeRaw,
-      width, height, border: 14, magLimit, aperture,
-      fullview, guides, constellation, constellationSegments,
+      lat, lon, utc, summertime, dateUtc, dateRaw, timeRaw,
+      width, height,
+      borders: 10, // parity with Python default when no-info / guide geometry basis
+      magLimit, aperture, fullview, guides, constellation, constellationSegments,
       light, noInfo, infoText
     });
 
