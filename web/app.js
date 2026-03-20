@@ -16,6 +16,7 @@ const FALLBACK_STARS = [
 
 let CATALOG_CACHE = null;
 let CONSTELLATION_CACHE = null;
+let CATALOG_SOURCE = "unknown";
 
 window.initMap = function () {
   const center = { lat: 60.186, lng: 24.959 };
@@ -242,14 +243,15 @@ async function fetchFirstJson(paths) {
 async function loadCatalog() {
   if (CATALOG_CACHE) return CATALOG_CACHE;
 
-  // 1) JSON preferred
   const json = await fetchFirstJson(["./stars.min.json", "./data/stars.min.json", "../data/stars.min.json"]);
   if (Array.isArray(json) && json.length) {
     CATALOG_CACHE = json.map((s, i) => normalizeStar(s, i)).filter(Boolean);
-    if (CATALOG_CACHE.length) return CATALOG_CACHE;
+    if (CATALOG_CACHE.length) {
+      CATALOG_SOURCE = "json";
+      return CATALOG_CACHE;
+    }
   }
 
-  // 2) Parse repo text catalogs
   const ybscText = await fetchFirstText([
     "../datafiles/ybsc5.txt",
     "./datafiles/ybsc5.txt",
@@ -264,31 +266,29 @@ async function loadCatalog() {
 
   const stars = [];
   if (ybscText) {
-    const lines = ybscText.split(/\r?\n/);
-    for (let i = 0; i < lines.length; i++) {
-      const ln = lines[i];
+    for (const ln of ybscText.split(/\r?\n/)) {
       let s = parseYBSC5FixedWidth(ln, stars.length);
       if (!s) s = parseFlexibleStarLine(ln, stars.length);
       if (s) stars.push(s);
     }
   }
-
   if (extraText) {
-    const lines = extraText.split(/\r?\n/);
-    for (let i = 0; i < lines.length; i++) {
-      const s = parseFlexibleStarLine(lines[i], stars.length);
+    for (const ln of extraText.split(/\r?\n/)) {
+      const s = parseFlexibleStarLine(ln, stars.length);
       if (s) stars.push(s);
     }
   }
 
-  if (stars.length) {
+  if (stars.length > 1000) {
     CATALOG_CACHE = stars;
+    CATALOG_SOURCE = "repo-datafiles";
     return CATALOG_CACHE;
   }
 
-  // 3) Fallback
-  CATALOG_CACHE = FALLBACK_STARS.map((s, i) => normalizeStar(s, i)).filter(Boolean);
-  return CATALOG_CACHE;
+  throw new Error(
+    "Star catalog not loaded (ybsc5/extradata missing or blocked). " +
+    "Do not run via file://. Use GitHub Pages or a local web server."
+  );
 }
 
 function buildStarLookup(stars) {
@@ -472,6 +472,7 @@ document.getElementById("generate")?.addEventListener("click", async () => {
     const infoText = getValue("info", "");
 
     const stars = await loadCatalog();
+    console.log(`Catalog source: ${CATALOG_SOURCE}, stars: ${stars.length}`);
     const constellationSegments = constellation ? await loadConstellationSegments(stars) : [];
 
     const svg = buildSvg(stars, {
