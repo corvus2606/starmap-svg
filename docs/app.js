@@ -633,7 +633,6 @@ document.getElementById("generate")?.addEventListener("click", async () => {
   try {
     const { lat, lon } = parseCoord(getValue("coord", "60.186,24.959"));
 
-    // Prefer picker inputs
     const dateRaw =
       toDdMmYyyyFromPicker(getValue("datePicker")) ||
       getValue("date", "01.01.2000");
@@ -657,14 +656,17 @@ document.getElementById("generate")?.addEventListener("click", async () => {
     const noInfo = getBool("no-info", false);
     const infoText = getValue("info", "");
 
+    const border = 14; // declare border here
+
     const stars = await loadCatalog();
     console.log(`Catalog source: ${CATALOG_SOURCE}, stars: ${stars.length}`);
 
     const constellationSegments = constellation ? await loadConstellationSegments(stars) : [];
+
     const svg = buildSvg(stars, {
       lat, lon, utc, summertime, dateUtc, dateRaw, timeRaw,
       width, height,
-      border,   // consistent single key
+      border,
       borders: border,
       magLimit, aperture, fullview, guides, constellation, constellationSegments,
       light, noInfo, infoText
