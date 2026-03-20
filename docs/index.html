@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Starmap Web</title>
+  <title>Starmap-SVG Web</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>✨</text></svg>">
   <style>
     :root{
@@ -49,7 +49,7 @@
     }
 
     .wrap{
-      max-width: 1400px;
+      max-width: 960px;
       margin: 24px auto;
       padding: 16px;
       background: var(--panel);
@@ -115,6 +115,53 @@
       font-weight: 600;
     }
 
+    .zoom-out-controls {
+      display: grid;
+      grid-template-columns: auto minmax(180px, 1fr) auto auto;
+      column-gap: 8px;
+      row-gap: 4px;
+      align-items: center;
+      min-width: 320px;
+    }
+
+    .zoom-out-controls input[type="range"] {
+      grid-column: 2;
+      min-height: 24px;
+      padding: 0;
+    }
+
+    .zoom-out-left { grid-column: 1; }
+    .zoom-out-right { grid-column: 3; }
+
+    .zoom-out-hint {
+      font-size: .82rem;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    #zoom-out-readout {
+      grid-column: 4;
+      min-width: 54px;
+      text-align: right;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .zoom-out-ticks {
+      grid-column: 2;
+      width: 100%;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      font-size: .76rem;
+      color: var(--muted);
+      line-height: 1.1;
+      margin-top: 2px;
+    }
+
+    .zoom-out-ticks span {
+      text-align: center;
+    }
+
     button:hover, a#download:hover {
       background: var(--accent-hover);
     }
@@ -157,7 +204,9 @@
 </head>
 <body>
   <main class="wrap">
-    <h1>Starmap Web</h1>
+    <h1>Starmap=SVG Web</h1>
+    <h3>Generate custom starmap SVGs for any location and time, right in your browser.</h3>
+    <h4>A Java port of <a href="https://github.com/skeletor-git/starmap-svg" target="_blank">Starmap-SVG by Skeletor-git</a></h4>
     <div class="row">
       <input id="search" placeholder="Search city/place" size="32" />
     </div>
@@ -187,6 +236,24 @@
       <label><input id="constellation" type="checkbox" /> constellation</label>
       <label><input type="checkbox" id="show-border" /> border</label>
       <label><input type="checkbox" id="star-shape" /> star shapes</label>
+      <label>Zoom
+          <span class="zoom-out-controls">
+            <span class="zoom-out-hint zoom-out-left">out</span>
+            <input id="zoom-out" type="range" min="2" max="3" step="0.1" value="2.5" list="zoom-slider-ticks" title="Left is most zoomed out, right is most zoomed in" />
+            <span class="zoom-out-hint zoom-out-right">in</span>
+            <!--<span id="zoom-out-readout">2.5</span>
+            <span class="zoom-out-ticks" aria-hidden="true">
+              <span>-1</span>
+              <span>0</span>
+              <span>1</span>
+            </span>-->
+          </span>
+          <datalist id="zoom-slider-ticks">
+            <option value="2"></option>
+            <option value="2.5"></option>
+            <option value="3"></option>
+          </datalist>
+        </label>
     </div>
     <details>
       <summary>Advanced options</summary>

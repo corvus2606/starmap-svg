@@ -18,14 +18,53 @@ const FALLBACK_STARS = [
 let CATALOG_CACHE = null;
 let CONSTELLATION_CACHE = null;
 let CATALOG_SOURCE = "unknown";
+const MAP_PIN_VIEW_MILES = 5;
+const SETTINGS_STORAGE_KEY = "starmap-svg-settings-v1";
+const PERSISTED_CONTROL_IDS = [
+  "coord", "datePicker", "timePicker", "utc", "info",
+  "guides", "constellation", "show-border", "star-shape", "zoom-out",
+  "summertime", "light", "no-info",
+  "magn", "aperture", "star-points", "width", "height",
+  "bg-color", "star-color", "guide-color", "constellation-color", "border-color", "text-color",
+];
 
 function applyMapLocation(lat, lng, zoom = 8) {
   if (!map || !marker) return;
   const pos = { lat, lng };
-  map.setCenter(pos);
-  map.setZoom(zoom);
+  setMapViewAroundPin(lat, lng, MAP_PIN_VIEW_MILES);
   marker.position = pos; // AdvancedMarkerElement
   setValue("coord", `${lat.toFixed(6)},${lng.toFixed(6)}`);
+  saveSettingsToStorage();
+}
+
+function computeMapZoomForMiles(lat, miles, widthPx, heightPx) {
+  const safeWidth = Math.max(320, Number(widthPx) || 800);
+  const safeHeight = Math.max(240, Number(heightPx) || 360);
+  const minDimPx = Math.min(safeWidth, safeHeight);
+
+  const radiusMeters = Math.max(1, Number(miles) * 1609.344);
+  const latRad = (lat * Math.PI) / 180;
+  const cosLat = Math.max(0.1, Math.abs(Math.cos(latRad)));
+
+  const targetMpp = radiusMeters / (minDimPx / 2);
+  const rawZoom = Math.log2((156543.03392 * cosLat) / targetMpp);
+  return Math.max(1, Math.min(21, Number(rawZoom.toFixed(2))));
+}
+
+function setMapViewAroundPin(lat, lng, miles = 20) {
+  if (!map) return;
+
+  const mapDiv = map.getDiv?.();
+  const zoom = computeMapZoomForMiles(lat, miles, mapDiv?.clientWidth, mapDiv?.clientHeight);
+
+  map.setCenter({ lat, lng });
+  map.setZoom(zoom);
+
+  // Reapply once after map settles to avoid startup/layout race causing inconsistent zoom.
+  google.maps.event.addListenerOnce(map, "idle", () => {
+    map.setCenter({ lat, lng });
+    map.setZoom(zoom);
+  });
 }
 
 function toUpperCity(value) {
@@ -113,6 +152,7 @@ async function setupAddressSearch() {
         LAST_PLACE_LABEL = quick;
         const infoEl = document.getElementById("info");
         if (infoEl) infoEl.value = quick;
+        saveSettingsToStorage();
       }
 
       const place = prediction.toPlace();
@@ -132,6 +172,7 @@ async function setupAddressSearch() {
         LAST_PLACE_LABEL = refined;
         const infoEl = document.getElementById("info");
         if (infoEl) infoEl.value = refined;
+        saveSettingsToStorage();
       }
     } catch (e) {
       console.warn("Place selection failed:", e);
@@ -159,6 +200,7 @@ async function setupAddressSearch() {
         LAST_PLACE_LABEL = city;
         const infoEl = document.getElementById("info");
         if (infoEl) infoEl.value = city;
+        saveSettingsToStorage();
       }
     } catch (e) {
       console.warn("Place selection failed:", e);
@@ -338,16 +380,55 @@ async function applyTimezoneForLocation(lat, lng) {
   setValue("utc", String(utc));
   const stEl = document.getElementById("summertime");
   if (stEl) stEl.checked = summertime;
+  saveSettingsToStorage();
   console.log(`Timezone applied: UTC${utc >= 0 ? "+" : ""}${utc}, summertime=${summertime}`);
 }
 
-window.initMap = async function () {
-  const center = { lat: 60.186, lng: 24.959 };
+function getSavedCoordFromStorage() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (!raw) return null;
+    const payload = JSON.parse(raw);
+    const coord = String(payload?.coord ?? "").trim();
+    if (!coord) return null;
+    const { lat, lon } = parseCoord(coord);
+    return { lat, lng: lon };
+  } catch {
+    return null;
+  }
+}
 
-  map = new google.maps.Map(document.getElementById("map"), {
+function getBrowserLocation() {
+  return new Promise((resolve) => {
+    if (!navigator?.geolocation) {
+      resolve(null);
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+      },
+      () => resolve(null),
+      {
+        enableHighAccuracy: false,
+        timeout: 5000,
+        maximumAge: 300000,
+      }
+    );
+  });
+}
+
+window.initMap = async function () {
+  const savedCenter = getSavedCoordFromStorage();
+  const center = savedCenter || { lat: 60.186, lng: 24.959 };
+  const mapEl = document.getElementById("map");
+  const initialZoom = computeMapZoomForMiles(center.lat, MAP_PIN_VIEW_MILES, mapEl?.clientWidth, mapEl?.clientHeight);
+
+  map = new google.maps.Map(mapEl, {
     center,
-    zoom: 5,
+    zoom: initialZoom,
     mapId: GOOGLE_MAP_ID,
+    isFractionalZoomEnabled: true,
   });
 
   const { AdvancedMarkerElement } = await google.maps.importLibrary("marker");
@@ -357,7 +438,18 @@ window.initMap = async function () {
     title: "Selected location",
   });
 
-  setValue("coord", `${center.lat},${center.lng}`);
+  // Ensure the same miles-based zoom is applied immediately on initial load.
+  setMapViewAroundPin(center.lat, center.lng, MAP_PIN_VIEW_MILES);
+
+  setValue("coord", `${Number(center.lat).toFixed(6)},${Number(center.lng).toFixed(6)}`);
+
+  if (!savedCenter) {
+    const geoCenter = await getBrowserLocation();
+    if (geoCenter) {
+      applyMapLocation(geoCenter.lat, geoCenter.lng, map.getZoom());
+      await applyTimezoneForLocation(geoCenter.lat, geoCenter.lng);
+    }
+  }
 
   map.addListener("click", async (e) => {
     const lat = e.latLng.lat();
@@ -396,6 +488,52 @@ function getBool(id, fallback = false) {
   const v = String(el.value ?? "").trim().toLowerCase();
   if (!v) return fallback;
   return ["1", "true", "yes", "y", "on"].includes(v);
+}
+
+function saveSettingsToStorage() {
+  try {
+    const payload = {};
+    for (const id of PERSISTED_CONTROL_IDS) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      payload[id] = el.type === "checkbox" ? !!el.checked : String(el.value ?? "");
+    }
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(payload));
+  } catch (e) {
+    console.warn("Could not save settings:", e);
+  }
+}
+
+function restoreSettingsFromStorage() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (!raw) return;
+    const payload = JSON.parse(raw);
+    if (!payload || typeof payload !== "object") return;
+
+    for (const id of PERSISTED_CONTROL_IDS) {
+      if (!(id in payload)) continue;
+      const el = document.getElementById(id);
+      if (!el) continue;
+
+      if (el.type === "checkbox") {
+        el.checked = !!payload[id];
+      } else {
+        el.value = String(payload[id] ?? "");
+      }
+    }
+  } catch (e) {
+    console.warn("Could not restore settings:", e);
+  }
+}
+
+function bindSettingsPersistence() {
+  for (const id of PERSISTED_CONTROL_IDS) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.addEventListener("input", saveSettingsToStorage);
+    el.addEventListener("change", saveSettingsToStorage);
+  }
 }
 
 function parseCoord(value) {
@@ -785,12 +923,22 @@ function pyStereographic(latitude0, longitude0, latitude, longitude, R) {
   return { x, y };
 }
 
-function buildProjectionParams(lat, lon, dateRaw, timeRaw, utc, summertime, R, cx, cy) {
+function buildProjectionParams(lat, lon, dateRaw, timeRaw, utc, summertime, R, cx, cy, zoomOut = 1) {
   const N = degToRad(lat);
   const E = degToRad(lon);
   const raddatetime = pyDateAndTimeToRad(dateRaw, timeRaw, utc, summertime);
-  const maxAngle = degToRad(89);
-  return { N, E, raddatetime, R, cx, cy, maxAngle };
+  const z = normalizeZoomOut(zoomOut);
+  // Preserve the current default visual scale at z=1, then widen field of view as z grows.
+  // Current baseline effectively fits about 53.13 deg from center into the circle radius.
+  const baseVisibleAngle = 2 * Math.atan(0.5);
+  const maxVisibleAngle = degToRad(170);
+  const visibleAngle = Math.min(baseVisibleAngle * z, maxVisibleAngle);
+
+  // Stereographic radial relation: r = 2R * tan(c/2)
+  // Choose projection radius so visibleAngle maps to the chart boundary radius.
+  const projectionRadius = R / (2 * Math.tan(visibleAngle / 2));
+  const maxAngle = visibleAngle;
+  return { N, E, raddatetime, R: projectionRadius, cx, cy, maxAngle };
 }
 
 // Project a single star using pre-computed params (fast - no recalculation)
@@ -811,6 +959,18 @@ function normalizeStarPoints(n) {
   const v = Math.round(Number(n));
   if (!Number.isFinite(v)) return 4;
   return Math.max(3, Math.min(12, v));
+}
+
+function normalizeZoomOut(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 1;
+  return Math.max(1, Math.min(5, n));
+}
+
+function sliderToZoomOut(v) {
+  const slider = Math.max(2, Math.min(3, Number(v) || 2.5));
+  // Slider is left=out (2), right=in (3). Keep existing mapping from prior scale.
+  return normalizeZoomOut(5 - (slider / 3) * 4);
 }
 
 function buildSvg(stars, opts) {
@@ -846,7 +1006,8 @@ function buildSvg(stars, opts) {
     opts.lat, opts.lon,
     opts.dateRaw, opts.timeRaw,
     opts.utc, opts.summertime,
-    radius, cx, cy
+    radius, cx, cy,
+    opts.zoomOut
   );
 
   const pieces = [];
@@ -946,12 +1107,15 @@ function setDefaultDateTime() {
 
 // call on load
 setDefaultDateTime();
+applyThemeColorDefaults(true);
+restoreSettingsFromStorage();
 syncInfoInputToUppercase();
 bindTimezoneRefreshHandlers();
 setDownloadEnabled(false);
-applyThemeColorDefaults(true);
 bindThemeDefaultHandlers();
 bindStarPointsToggle();
+bindZoomOutSlider();
+bindSettingsPersistence();
 
 document.getElementById("coord")?.addEventListener("blur", async (ev) => {
   const v = ev?.target?.value;
@@ -991,6 +1155,7 @@ document.getElementById("generate")?.addEventListener("click", async () => {
     const showBorder = getBool("show-border", false);
     const starShape = getBool("star-shape", false);
     const starPoints = normalizeStarPoints(getValue("star-points", "4"));
+    const zoomOut = sliderToZoomOut(getValue("zoom-out", "2.5"));
 
     const bgColor = getValue("bg-color", "");
     const starColor = getValue("star-color", "");
@@ -1014,7 +1179,7 @@ document.getElementById("generate")?.addEventListener("click", async () => {
       border,
       borders: border,
       magLimit, aperture, fullview, guides, constellation, constellationSegments,
-      light, noInfo, infoText, showBorder, starShape, starPoints,
+      light, noInfo, infoText, showBorder, starShape, starPoints, zoomOut,
       bgColor, starColor, guideColor, constellationColor, borderColor, textColor
     });
 
@@ -1053,7 +1218,8 @@ function generateGuidesPy(opts) {
     opts.summertime,
     Math.min(opts.width, opts.height) / 2 - border,
     opts.width / 2,
-    opts.height / 2
+    opts.height / 2,
+    opts.zoomOut
   );
 
   const dots = [];
@@ -1210,4 +1376,20 @@ function bindStarPointsToggle() {
   if (!starShapeEl) return;
   starShapeEl.addEventListener("change", syncStarPointsEnabled);
   syncStarPointsEnabled(); // initialize on load
+}
+
+function bindZoomOutSlider() {
+  const input = document.getElementById("zoom-out");
+  const readout = document.getElementById("zoom-out-readout");
+  if (!input) return;
+
+  const sync = () => {
+    const sliderValue = Math.max(2, Math.min(3, Number(input.value) || 2.5));
+    input.value = String(sliderValue);
+    if (readout) readout.textContent = sliderValue.toFixed(1);
+  };
+
+  input.addEventListener("input", sync);
+  input.addEventListener("change", sync);
+  sync();
 }
