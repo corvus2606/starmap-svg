@@ -19,11 +19,19 @@ let CATALOG_CACHE = null;
 let CONSTELLATION_CACHE = null;
 let CATALOG_SOURCE = "unknown";
 const MAP_PIN_VIEW_MILES = 5;
-const SETTINGS_STORAGE_KEY = "starmap-svg-settings-v1";
+const SETTINGS_STORAGE_KEY = "starmap-svg-settings-v2-mm";
+const XTOOL_COLOR_PRESET = {
+  "border-color": "#fe0002",
+  "star-color": "#d9d9d9",
+  "constellation-color": "#c29900",
+  "guide-color": "#848b96",
+};
 const PERSISTED_CONTROL_IDS = [
   "coord", "datePicker", "timePicker", "utc", "info",
   "guides", "constellation", "show-border", "star-shape", "zoom-out",
-  "summertime", "light", "no-info",
+  "summertime", "light", "no-info", "transparent-bg",
+  "blank-circle", "blank-radius", "blank-distance",
+  "guide-dec-min", "guide-dec-max", "guide-dec-step", "guide-meridian-range",
   "magn", "aperture", "star-points", "width", "height",
   "bg-color", "star-color", "guide-color", "constellation-color", "border-color", "text-color",
 ];
@@ -978,6 +986,108 @@ function normalizeZoomOut(v) {
   return Math.max(1, Math.min(5, n));
 }
 
+function normalizeNonNegativeNumber(value, fallback = 0) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(0, n);
+}
+
+function normalizePositiveNumber(value, fallback = 1) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return n;
+}
+
+function resolveBlankCircle(opts, cx, cy, mapRadius) {
+  if (!opts.blankCircle) return null;
+
+  const radius = normalizeNonNegativeNumber(opts.blankRadius, 0);
+  if (radius <= 0) return null;
+
+  const maxRadius = Math.max(0, mapRadius - 1);
+  const r = Math.min(radius, maxRadius);
+  if (r <= 0) return null;
+
+  const distance = normalizeNonNegativeNumber(opts.blankDistance, 0);
+
+  // Position along the vertical centerline, measured down from the top map edge.
+  const unclampedY = cy - mapRadius + distance + r;
+  const minY = cy - mapRadius + r;
+  const maxY = cy + mapRadius - r;
+  const y = clamp(unclampedY, minY, maxY);
+
+  return { x: cx, y, r };
+}
+
+function circleHolePath(cx, cy, r) {
+  return `M ${cx.toFixed(2)} ${(cy - r).toFixed(2)} a ${r.toFixed(2)} ${r.toFixed(2)} 0 1 0 0 ${(2 * r).toFixed(2)} a ${r.toFixed(2)} ${r.toFixed(2)} 0 1 0 0 ${(-2 * r).toFixed(2)} Z`;
+}
+
+function pointInsideCircle(x, y, c) {
+  if (!c) return false;
+  const dx = Number(x) - c.x;
+  const dy = Number(y) - c.y;
+  return dx * dx + dy * dy < c.r * c.r;
+}
+
+function splitLineOutsideCircle(a, b, c) {
+  if (!c) return [[a, b]];
+
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const fx = a.x - c.x;
+  const fy = a.y - c.y;
+
+  const A = dx * dx + dy * dy;
+  if (A <= 1e-12) return pointInsideCircle(a.x, a.y, c) ? [] : [[a, b]];
+
+  const B = 2 * (fx * dx + fy * dy);
+  const C = fx * fx + fy * fy - c.r * c.r;
+  const D = B * B - 4 * A * C;
+
+  const aInside = pointInsideCircle(a.x, a.y, c);
+  const bInside = pointInsideCircle(b.x, b.y, c);
+
+  if (D < 0) {
+    return (aInside && bInside) ? [] : [[a, b]];
+  }
+
+  const sqrtD = Math.sqrt(Math.max(0, D));
+  const t1 = (-B - sqrtD) / (2 * A);
+  const t2 = (-B + sqrtD) / (2 * A);
+
+  const ts = [t1, t2]
+    .filter((t) => Number.isFinite(t) && t >= 0 && t <= 1)
+    .sort((u, v) => u - v);
+
+  if (!ts.length) {
+    return (aInside && bInside) ? [] : [[a, b]];
+  }
+
+  const pointAt = (t) => ({ x: a.x + dx * t, y: a.y + dy * t });
+
+  if (!aInside && !bInside) {
+    if (ts.length >= 2) {
+      const p1 = pointAt(ts[0]);
+      const p2 = pointAt(ts[1]);
+      return [[a, p1], [p2, b]];
+    }
+    return [[a, b]];
+  }
+
+  if (aInside && !bInside) {
+    const p = pointAt(ts[ts.length - 1]);
+    return [[p, b]];
+  }
+
+  if (!aInside && bInside) {
+    const p = pointAt(ts[0]);
+    return [[a, p]];
+  }
+
+  return [];
+}
+
 function sliderToZoomOut(v) {
   const slider = Math.max(2, Math.min(3, Number(v) || 2.5));
   // Slider is left=out (2), right=in (3). Keep existing mapping from prior scale.
@@ -994,6 +1104,7 @@ function buildSvg(stars, opts) {
 
   const isLight = !!opts.light;
   const showBorder = !!opts.showBorder;
+  const transparentBg = !!opts.transparentBg;
   const useStarShapes = !!opts.starShape;
   const starPoints = normalizeStarPoints(opts.starPoints);
 
@@ -1021,17 +1132,25 @@ function buildSvg(stars, opts) {
     opts.zoomOut
   );
 
+  const blankCircle = resolveBlankCircle(opts, cx, cy, radius);
+  const hasBlankCircle = !!blankCircle;
+
   const pieces = [];
-  pieces.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`);
-  pieces.push(`<defs><clipPath id="${clipId}"><circle cx="${cx}" cy="${cy}" r="${radius}"/></clipPath></defs>`);
-  pieces.push(`<rect width="100%" height="100%" fill="${bg}"/>`);
+  pieces.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}mm" height="${height}mm" viewBox="0 0 ${width} ${height}">`);
+  pieces.push(`<defs>`);
+  pieces.push(`<clipPath id="${clipId}"><circle cx="${cx}" cy="${cy}" r="${radius}"/></clipPath>`);
+  pieces.push(`</defs>`);
+  if (!transparentBg && hasBlankCircle) {
+    pieces.push(`<path d="M0 0 H${width} V${height} H0 Z ${circleHolePath(blankCircle.x, blankCircle.y, blankCircle.r)}" fill="${bg}" fill-rule="evenodd"/>`);
+  } else if (!transparentBg) {
+    pieces.push(`<rect width="100%" height="100%" fill="${bg}"/>`);
+  }
   pieces.push(`<g clip-path="url(#${clipId})">`);
 
   if (opts.guides) {
-    const guideDots = generateGuidesPy({ ...opts, borders: border, proj });
-    for (const d of guideDots) {
-      if (!Number.isFinite(d.x) || !Number.isFinite(d.y) || !Number.isFinite(d.r)) continue;
-      pieces.push(`<circle cx="${d.x.toFixed(2)}" cy="${d.y.toFixed(2)}" r="${d.r.toFixed(2)}" fill="${guideFill}" opacity="0.35" />`);
+    const guidePaths = generateGuidePathsPy({ ...opts, borders: border, proj, blankCircle });
+    for (const pathD of guidePaths) {
+      pieces.push(`<path d="${pathD}" fill="none" stroke="${guideFill}" stroke-width="0.7" stroke-linecap="round" opacity="0.45" />`);
     }
   }
 
@@ -1040,13 +1159,17 @@ function buildSvg(stars, opts) {
       const A = projectWithParams(Number(a.ra), Number(a.dec), proj);
       const B = projectWithParams(Number(b.ra), Number(b.dec), proj);
       if (!A || !B) continue;
-      pieces.push(`<line x1="${A.x.toFixed(2)}" y1="${A.y.toFixed(2)}" x2="${B.x.toFixed(2)}" y2="${B.y.toFixed(2)}" stroke="${conFill}" stroke-width="0.6" opacity="0.9"/>`);
+      const outsideSegments = splitLineOutsideCircle(A, B, blankCircle);
+      for (const [p1, p2] of outsideSegments) {
+        pieces.push(`<line x1="${p1.x.toFixed(2)}" y1="${p1.y.toFixed(2)}" x2="${p2.x.toFixed(2)}" y2="${p2.y.toFixed(2)}" stroke="${conFill}" stroke-width="0.6" opacity="0.9"/>`);
+      }
     }
   }
 
   for (const s of stars) {
     const p = projectWithParams(Number(s.ra), Number(s.dec), proj);
     if (!p) continue;
+    if (pointInsideCircle(p.x, p.y, blankCircle)) continue;
 
     const r = starRadius(Number(s.mag), opts.magLimit, opts.aperture);
     if (r <= 0 || !Number.isFinite(r)) continue;
@@ -1062,6 +1185,9 @@ function buildSvg(stars, opts) {
 
   if (showBorder) {
     pieces.push(`<circle cx="${cx}" cy="${cy}" r="${radius}" fill="none" stroke="${borderClr}" stroke-width="1.5"/>`);
+    if (hasBlankCircle) {
+      pieces.push(`<circle cx="${blankCircle.x.toFixed(2)}" cy="${blankCircle.y.toFixed(2)}" r="${blankCircle.r.toFixed(2)}" fill="none" stroke="${borderClr}" stroke-width="1.5"/>`);
+    }
   }
 
   if (!opts.noInfo) {
@@ -1154,8 +1280,8 @@ document.getElementById("generate")?.addEventListener("click", async () => {
     const summertime = getBool("summertime", false);
     const dateUtc = parseDateTimeToUtc(dateRaw, timeRaw, utc, summertime);
 
-    const width = Number(getValue("width", "800")) || 800;
-    const height = Number(getValue("height", "800")) || 800;
+    const width = Number(getValue("width", "200")) || 200;
+    const height = Number(getValue("height", "200")) || 200;
     const magLimit = Number(getValue("magn", "5.7")) || 5.7;
     const aperture = Number(getValue("aperture", "0.4")) || 0.4;
     const fullview = getBool("fullview", false);
@@ -1163,6 +1289,14 @@ document.getElementById("generate")?.addEventListener("click", async () => {
     const constellation = getBool("constellation", false);
     const light = getBool("light", false);
     const noInfo = getBool("no-info", false);
+    const transparentBg = getBool("transparent-bg", false);
+    const blankCircle = getBool("blank-circle", false);
+    const blankRadius = normalizeNonNegativeNumber(getValue("blank-radius", "15"), 15);
+    const blankDistance = normalizeNonNegativeNumber(getValue("blank-distance", "6"), 6);
+    const guideDecMin = clamp(Number(getValue("guide-dec-min", "-60")), -89, 89);
+    const guideDecMax = clamp(Number(getValue("guide-dec-max", "60")), -89, 89);
+    const guideDecStep = clamp(normalizePositiveNumber(getValue("guide-dec-step", "30"), 30), 1, 45);
+    const guideMeridianRange = clamp(normalizePositiveNumber(getValue("guide-meridian-range", "75"), 75), 1, 89);
     const showBorder = getBool("show-border", false);
     const starShape = getBool("star-shape", false);
     const starPoints = normalizeStarPoints(getValue("star-points", "4"));
@@ -1180,7 +1314,7 @@ document.getElementById("generate")?.addEventListener("click", async () => {
     const infoText = manualInfo || LAST_PLACE_LABEL || "";
     console.log("infoText for SVG:", infoText, "| LAST_PLACE_LABEL:", LAST_PLACE_LABEL);
 
-    const border = 14;
+    const border = 4;
     const stars = await loadCatalog();
     const constellationSegments = constellation ? await loadConstellationSegments(stars) : [];
 
@@ -1190,7 +1324,9 @@ document.getElementById("generate")?.addEventListener("click", async () => {
       border,
       borders: border,
       magLimit, aperture, fullview, guides, constellation, constellationSegments,
-      light, noInfo, infoText, showBorder, starShape, starPoints, zoomOut,
+      light, noInfo, infoText, showBorder, transparentBg, starShape, starPoints, zoomOut,
+      blankCircle, blankRadius, blankDistance,
+      guideDecMin, guideDecMax, guideDecStep, guideMeridianRange,
       bgColor, starColor, guideColor, constellationColor, borderColor, textColor
     });
 
@@ -1217,7 +1353,7 @@ async function fetchFirstText(paths) {
   return null;
 }
 
-function generateGuidesPy(opts) {
+function generateGuidePathsPy(opts) {
   // Reuse precomputed projection params if provided
   const border = opts.border ?? opts.borders ?? 14;
   const proj = opts.proj ?? buildProjectionParams(
@@ -1233,40 +1369,96 @@ function generateGuidesPy(opts) {
     opts.zoomOut
   );
 
-  const dots = [];
-  const brightness = 1.1;
+  const guidePaths = [];
+  const blankCircle = opts.blankCircle || null;
 
-  // Declination bands every 30°, RA sampled every 1°
-  for (let decDeg = -90; decDeg < 90; decDeg += 30) {
-    for (let raDeg = 0; raDeg < 360; raDeg++) {
-      const ascension = degToRad(raDeg) + proj.raddatetime;
-      const declination = degToRad(decDeg);
-      const angle = pyAngleBetween(proj.N, proj.E, declination, ascension);
-      if (angle > proj.maxAngle && !opts.fullview) continue;
+  let decMin = clamp(Number(opts.guideDecMin ?? -60), -89, 89);
+  let decMax = clamp(Number(opts.guideDecMax ?? 60), -89, 89);
+  if (decMin > decMax) {
+    const t = decMin;
+    decMin = decMax;
+    decMax = t;
+  }
+  const decStep = clamp(normalizePositiveNumber(opts.guideDecStep, 30), 1, 45);
+  const meridianRange = clamp(normalizePositiveNumber(opts.guideMeridianRange, 75), 1, 89);
 
-      const { x, y } = pyStereographic(proj.N, proj.E, declination, ascension, proj.R);
-      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-      dots.push({ x: proj.cx - x, y: proj.cy - y, r: brightness * opts.aperture });
-    }
+  function flushSegment(points) {
+    if (!points || points.length < 2) return;
+    const d = points
+      .map((p, idx) => `${idx === 0 ? "M" : "L"}${p.x.toFixed(2)} ${p.y.toFixed(2)}`)
+      .join(" ");
+    guidePaths.push(d);
   }
 
-  // RA meridians every 1h, Dec sampled every 0.5°
+  function buildPathFromSamples(samples, pointAt, shouldSkip) {
+    let segment = [];
+    for (const sample of samples) {
+      if (shouldSkip(sample)) {
+        flushSegment(segment);
+        segment = [];
+        continue;
+      }
+
+      const p = pointAt(sample);
+      if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)) {
+        flushSegment(segment);
+        segment = [];
+        continue;
+      }
+      if (pointInsideCircle(p.x, p.y, blankCircle)) {
+        flushSegment(segment);
+        segment = [];
+        continue;
+      }
+      segment.push(p);
+    }
+    flushSegment(segment);
+  }
+
+  // Declination bands within configured range.
+  for (let decDeg = decMin; decDeg <= decMax + 1e-9; decDeg += decStep) {
+    const raSamples = Array.from({ length: 361 }, (_, i) => i);
+    buildPathFromSamples(
+      raSamples,
+      (raDeg) => {
+        const ascension = degToRad(raDeg) + proj.raddatetime;
+        const declination = degToRad(decDeg);
+        const { x, y } = pyStereographic(proj.N, proj.E, declination, ascension, proj.R);
+        return { x: proj.cx - x, y: proj.cy - y };
+      },
+      (raDeg) => {
+        const ascension = degToRad(raDeg) + proj.raddatetime;
+        const declination = degToRad(decDeg);
+        const angle = pyAngleBetween(proj.N, proj.E, declination, ascension);
+        return angle > proj.maxAngle && !opts.fullview;
+      }
+    );
+  }
+
+  // RA meridians every 1h within configured declination range.
   for (let hour = 0; hour < 24; hour++) {
     const raDeg = hour * 15;
-    for (let d = -160; d < 160; d++) {
-      const decDeg = d / 2.0;
+    const stepHalfDeg = 0.5;
+    const samples = Math.floor((2 * meridianRange) / stepHalfDeg) + 1;
+    const decSamples = Array.from({ length: samples }, (_, i) => -meridianRange + i * stepHalfDeg);
+    buildPathFromSamples(
+      decSamples,
+      (decDeg) => {
+        const ascension = degToRad(raDeg) + proj.raddatetime;
+        const declination = degToRad(decDeg);
+        const { x, y } = pyStereographic(proj.N, proj.E, declination, ascension, proj.R);
+        return { x: proj.cx - x, y: proj.cy - y };
+      },
+      (decDeg) => {
       const ascension = degToRad(raDeg) + proj.raddatetime;
       const declination = degToRad(decDeg);
       const angle = pyAngleBetween(proj.N, proj.E, declination, ascension);
-      if (angle > proj.maxAngle && !opts.fullview) continue;
-
-      const { x, y } = pyStereographic(proj.N, proj.E, declination, ascension, proj.R);
-      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-      dots.push({ x: proj.cx - x, y: proj.cy - y, r: brightness * opts.aperture });
-    }
+        return angle > proj.maxAngle && !opts.fullview;
+      }
+    );
   }
 
-  return dots;
+  return guidePaths;
 }
 
 async function refreshTimezoneFromCurrentInputs() {
@@ -1373,6 +1565,25 @@ function bindThemeDefaultHandlers() {
 
 bindThemeDefaultHandlers();
 
+function syncTransparentBackgroundEnabled() {
+  const transparentEl = document.getElementById("transparent-bg");
+  const bgColorEl = document.getElementById("bg-color");
+  if (!transparentEl || !bgColorEl) return;
+
+  const enabled = !!transparentEl.checked;
+  bgColorEl.disabled = enabled;
+  bgColorEl.setAttribute("aria-disabled", String(enabled));
+}
+
+function bindTransparentBackgroundToggle() {
+  const transparentEl = document.getElementById("transparent-bg");
+  if (!transparentEl) return;
+  transparentEl.addEventListener("change", syncTransparentBackgroundEnabled);
+  syncTransparentBackgroundEnabled();
+}
+
+bindTransparentBackgroundToggle();
+
 function syncStarPointsEnabled() {
   const starShapeEl = document.getElementById("star-shape");
   const starPointsEl = document.getElementById("star-points");
@@ -1405,6 +1616,42 @@ function bindZoomOutSlider() {
   input.addEventListener("change", sync);
   sync();
 }
+
+function bindResetGuideDefaults() {
+  const btn = document.getElementById("reset-guide-defaults");
+  if (!btn) return;
+
+  btn.addEventListener("click", () => {
+    setValue("guide-dec-min", "-60");
+    setValue("guide-dec-max", "60");
+    setValue("guide-dec-step", "30");
+    setValue("guide-meridian-range", "75");
+    saveSettingsToStorage();
+  });
+}
+
+bindResetGuideDefaults();
+
+function applyColorPreset(preset) {
+  for (const [id, value] of Object.entries(preset || {})) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.value = String(value || "");
+    el.dataset.autoTheme = "0";
+  }
+}
+
+function bindApplyXToolPalette() {
+  const btn = document.getElementById("apply-xtool-palette");
+  if (!btn) return;
+
+  btn.addEventListener("click", () => {
+    applyColorPreset(XTOOL_COLOR_PRESET);
+    saveSettingsToStorage();
+  });
+}
+
+bindApplyXToolPalette();
 
 document.addEventListener("DOMContentLoaded", () => {
   window.initMap().catch((e) => {

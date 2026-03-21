@@ -226,6 +226,12 @@
       background: var(--panel-2);
     }
 
+    #preview svg {
+      display: block;
+      max-width: 100%;
+      height: auto;
+    }
+
     details {
       margin: 12px 0;
       padding: 10px 12px;
@@ -322,12 +328,31 @@
           <input id="star-points" type="number" min="3" max="12" step="1" value="4" disabled />
         </label>
       </div>
+
       <div class="row">
-        <label>Width
-          <input id="width" type="number" step="1" value="800" title="Output width" />
+        <label>Declination min (deg)
+          <input id="guide-dec-min" type="number" min="-89" max="89" step="1" value="-60" title="Minimum declination for guide bands" />
         </label>
-        <label>Height
-          <input id="height" type="number" step="1" value="800" title="Output height" />
+        <label>Declination max (deg)
+          <input id="guide-dec-max" type="number" min="-89" max="89" step="1" value="60" title="Maximum declination for guide bands" />
+        </label>
+        <label>Declination step (deg)
+          <input id="guide-dec-step" type="number" min="1" max="45" step="1" value="30" title="Spacing between declination guide bands" />
+        </label>
+      </div>
+
+      <div class="row">
+        <label>Meridian range (deg)
+          <input id="guide-meridian-range" type="number" min="1" max="89" step="0.5" value="75" title="Draw meridian guides from -range to +range declination" />
+        </label>
+        <button id="reset-guide-defaults" type="button">Reset guide defaults</button>
+      </div>
+      <div class="row">
+        <label>Width (mm)
+          <input id="width" type="number" min="1" step="1" value="200" title="Output width in millimeters" />
+        </label>
+        <label>Height (mm)
+          <input id="height" type="number" min="1" step="1" value="200" title="Output height in millimeters" />
         </label>
       </div>
 
@@ -335,6 +360,10 @@
         <label>
           <input id="bg-color" type="color" value="#2d3b62" />
           Background
+        </label>
+        <label>
+          <input id="transparent-bg" type="checkbox" />
+          Transparent background
         </label>
       </div>
 
@@ -370,6 +399,17 @@
         <label>
           <input id="text-color" type="color" value="#ffffff" />
           Text
+        </label>
+        <button id="apply-xtool-palette" type="button">Apply XTool palette</button>
+      </div>
+
+      <div class="row">
+        <label><input id="blank-circle" type="checkbox" /> blank circle</label>
+        <label>Radius (mm)
+          <input id="blank-radius" type="number" min="0" step="0.1" value="15" title="Blank circle radius in millimeters" />
+        </label>
+        <label>Distance from top edge (mm)
+          <input id="blank-distance" type="number" min="0" step="0.1" value="6" title="Distance from map edge to blank circle edge in millimeters" />
         </label>
       </div>
 
