@@ -33,7 +33,7 @@ const PERSISTED_CONTROL_IDS = [
   "summertime", "no-info", "transparent-bg",
   "blank-circle", "blank-radius", "blank-distance",
   "guide-dec-min", "guide-dec-max", "guide-dec-step", "guide-meridian-range",
-  "magn", "aperture", "star-points", "width", "height", "download-scale",
+  "magn", "aperture", "star-points", "star-shape-mag-cutoff", "star-shape-scale", "width", "height", "download-scale",
   "bg-color", "star-color", "guide-color", "constellation-color", "border-color", "text-color",
   "info-font-family", "info-font-size",
 ];
@@ -556,6 +556,117 @@ function bindSettingsPersistence() {
     el.addEventListener("change", saveSettingsToStorage);
   }
 }
+
+// ── Size & Cutout Profiles ────────────────────────────────────────────────────
+const PROFILES_STORAGE_KEY = "starmap-svg-profiles-v1";
+const PROFILE_FIELDS = ["width", "height", "blank-circle", "blank-radius", "blank-distance", "download-scale"];
+
+function loadProfiles() {
+  try {
+    const raw = localStorage.getItem(PROFILES_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function saveProfiles(profiles) {
+  try {
+    localStorage.setItem(PROFILES_STORAGE_KEY, JSON.stringify(profiles));
+  } catch (e) {
+    console.warn("Could not save profiles:", e);
+  }
+}
+
+function renderProfileSelect(selectedName = "") {
+  const sel = document.getElementById("profile-select");
+  const del = document.getElementById("delete-profile");
+  if (!sel) return;
+  const profiles = loadProfiles();
+  const names = Object.keys(profiles).sort((a, b) => a.localeCompare(b));
+  sel.innerHTML = '<option value="">-- select profile --</option>';
+  for (const name of names) {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    if (name === selectedName) opt.selected = true;
+    sel.appendChild(opt);
+  }
+  if (del) del.disabled = sel.value === "";
+}
+
+function applyProfile(name) {
+  const profiles = loadProfiles();
+  const profile = profiles[name];
+  if (!profile) return;
+  for (const id of PROFILE_FIELDS) {
+    if (!(id in profile)) continue;
+    const el = document.getElementById(id);
+    if (!el) continue;
+    if (el.type === "checkbox") {
+      el.checked = !!profile[id];
+    } else {
+      el.value = String(profile[id] ?? "");
+    }
+  }
+  saveSettingsToStorage();
+}
+
+function bindProfileControls() {
+  const sel     = document.getElementById("profile-select");
+  const nameIn  = document.getElementById("profile-name");
+  const saveBtn = document.getElementById("save-profile");
+  const delBtn  = document.getElementById("delete-profile");
+  if (!sel || !nameIn || !saveBtn || !delBtn) return;
+
+  // Apply profile when selection changes and populate name field
+  sel.addEventListener("change", () => {
+    const chosen = sel.value;
+    delBtn.disabled = chosen === "";
+    if (chosen) {
+      nameIn.value = chosen;
+      applyProfile(chosen);
+    }
+  });
+
+  // Save current size + cutout settings under the given name
+  saveBtn.addEventListener("click", () => {
+    const name = nameIn.value.trim();
+    if (!name) {
+      nameIn.focus();
+      nameIn.placeholder = "Enter a name first";
+      return;
+    }
+    nameIn.placeholder = "Profile name";
+    const profiles = loadProfiles();
+    const entry = {};
+    for (const id of PROFILE_FIELDS) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      entry[id] = el.type === "checkbox" ? !!el.checked : String(el.value ?? "");
+    }
+    profiles[name] = entry;
+    saveProfiles(profiles);
+    renderProfileSelect(name);
+  });
+
+  // Delete the selected profile
+  delBtn.addEventListener("click", () => {
+    const name = sel.value;
+    if (!name) return;
+    if (!confirm(`Delete profile "${name}"?`)) return;
+    const profiles = loadProfiles();
+    delete profiles[name];
+    saveProfiles(profiles);
+    nameIn.value = "";
+    renderProfileSelect();
+  });
+
+  renderProfileSelect();
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 function parseCoord(value) {
   const [latS, lonS] = value.split(",").map((x) => x.trim());
@@ -1127,6 +1238,8 @@ function buildSvgParameterComment(opts) {
       show_border: !!opts.showBorder,
       star_shape: !!opts.starShape,
       star_points: opts.starPoints,
+      star_shape_mag_cutoff: opts.starShapeMagCutoff,
+      star_shape_scale: opts.starShapeScale,
       transparent_background: !!opts.transparentBg,
       no_info: !!opts.noInfo,
       info_font_family: opts.infoFontFamily || "Inter, sans-serif",
@@ -1238,6 +1351,8 @@ async function applyImportedMetadataSettings(meta) {
   if (Number.isFinite(Number(meta?.render?.mag_limit))) setValue("magn", String(meta.render.mag_limit));
   if (Number.isFinite(Number(meta?.render?.aperture))) setValue("aperture", String(meta.render.aperture));
   setValue("star-points", String(meta?.render?.star_points ?? getValue("star-points", "4")));
+  if (Number.isFinite(Number(meta?.render?.star_shape_mag_cutoff))) setValue("star-shape-mag-cutoff", String(meta.render.star_shape_mag_cutoff));
+  if (Number.isFinite(Number(meta?.render?.star_shape_scale))) setValue("star-shape-scale", String(meta.render.star_shape_scale));
 
   const setCheckbox = (id, value) => {
     const el = document.getElementById(id);
@@ -1358,6 +1473,8 @@ function buildSvg(stars, opts) {
   const transparentBg = !!opts.transparentBg;
   const useStarShapes = !!opts.starShape;
   const starPoints = normalizeStarPoints(opts.starPoints);
+  const starShapeMagCutoff = Number.isFinite(Number(opts.starShapeMagCutoff)) ? Number(opts.starShapeMagCutoff) : 3.25;
+  const starShapeScale = Number.isFinite(Number(opts.starShapeScale)) && Number(opts.starShapeScale) > 0 ? Number(opts.starShapeScale) : 1.2;
 
   const bgDefault = isLight ? "#ffffff" : "#2d3b62";
   const fgDefault = isLight ? "#0a0a0a" : "#ffffff";
@@ -1402,7 +1519,7 @@ function buildSvg(stars, opts) {
   if (opts.guides) {
     const guidePaths = generateGuidePathsPy({ ...opts, borders: border, proj, blankCircle });
     for (const pathD of guidePaths) {
-      pieces.push(`<path d="${pathD}" fill="none" stroke="${guideFill}" stroke-width="0.7" stroke-linecap="round" opacity="0.45" />`);
+      pieces.push(`<path d="${pathD}" fill="none" stroke="${guideFill}" stroke-width="0.4" stroke-linecap="round" opacity="0.45" />`);
     }
   }
 
@@ -1413,7 +1530,31 @@ function buildSvg(stars, opts) {
       if (!A || !B) continue;
       const outsideSegments = splitLineOutsideCircle(A, B, blankCircle);
       for (const [p1, p2] of outsideSegments) {
-        pieces.push(`<line x1="${p1.x.toFixed(2)}" y1="${p1.y.toFixed(2)}" x2="${p2.x.toFixed(2)}" y2="${p2.y.toFixed(2)}" stroke="${conFill}" stroke-width="0.6" opacity="0.9"/>`);
+        pieces.push(`<line x1="${p1.x.toFixed(2)}" y1="${p1.y.toFixed(2)}" x2="${p2.x.toFixed(2)}" y2="${p2.y.toFixed(2)}" stroke="${conFill}" stroke-width="0.3" opacity="0.6"/>`);
+      }
+    }
+  }
+
+  // Build a Set of catalog star objects for all constellation endpoints using a
+  // tolerance-based nearest-match search (constellation_lines.txt coords are
+  // rounded to ~3dp RA / 2dp Dec and don't always exactly match catalog values).
+  const constellationStarSet = new Set();
+  if (opts.constellation && Array.isArray(opts.constellationSegments)) {
+    const RA_TOL = 0.05;   // hours (~3 arcmin)
+    const DEC_TOL = 0.15;  // degrees
+    for (const [a, b] of opts.constellationSegments) {
+      for (const ep of [a, b]) {
+        let best = null, bestDist = Infinity;
+        for (const s of stars) {
+          let dra = Math.abs(s.ra - ep.ra);
+          if (dra > 12) dra = 24 - dra; // handle RA wrap-around near 0h/24h
+          const ddec = Math.abs(s.dec - ep.dec);
+          if (dra <= RA_TOL && ddec <= DEC_TOL) {
+            const dist = dra * dra + ddec * ddec;
+            if (dist < bestDist) { bestDist = dist; best = s; }
+          }
+        }
+        if (best) constellationStarSet.add(best);
       }
     }
   }
@@ -1423,11 +1564,15 @@ function buildSvg(stars, opts) {
     if (!p) continue;
     if (pointInsideCircle(p.x, p.y, blankCircle)) continue;
 
-    const r = starRadius(Number(s.mag), opts.magLimit, opts.aperture);
+    const isConstellationStar = constellationStarSet.has(s);
+
+    let r = starRadius(Number(s.mag), opts.magLimit, opts.aperture);
+    if (isConstellationStar && r <= 0) r = starRadius(Number(s.mag), Number(s.mag), opts.aperture);
     if (r <= 0 || !Number.isFinite(r)) continue;
 
-    if (useStarShapes && r >= 1.1) {
-      pieces.push(`<path d="${starPath(p.x, p.y, r, r * 0.45, starPoints)}" fill="${fg}" />`);
+    if (useStarShapes && Number(s.mag) <= starShapeMagCutoff) {
+      const rs = r * starShapeScale;
+      pieces.push(`<path d="${starPath(p.x, p.y, rs, rs * 0.45, starPoints)}" fill="${fg}" />`);
     } else {
       pieces.push(`<circle cx="${p.x.toFixed(2)}" cy="${p.y.toFixed(2)}" r="${r.toFixed(2)}" fill="${fg}" />`);
     }
@@ -1516,6 +1661,7 @@ bindThemeDefaultHandlers();
 bindStarPointsToggle();
 bindZoomOutSlider();
 bindSettingsPersistence();
+bindProfileControls();
 bindSvgSettingsImport();
 
 document.getElementById("coord")?.addEventListener("blur", async (ev) => {
@@ -1565,6 +1711,8 @@ document.getElementById("generate")?.addEventListener("click", async () => {
     const showBorder = getBool("show-border", false);
     const starShape = getBool("star-shape", false);
     const starPoints = normalizeStarPoints(getValue("star-points", "4"));
+    const starShapeMagCutoff = normalizeNonNegativeNumber(getValue("star-shape-mag-cutoff", "3.25"), 3.25);
+    const starShapeScale = clamp(normalizePositiveNumber(getValue("star-shape-scale", "1.2"), 1.2), 0.5, 4);
     const zoomOut = sliderToZoomOut(getValue("zoom-out", "2.5"));
 
     const bgColor = getValue("bg-color", "");
@@ -1591,7 +1739,7 @@ document.getElementById("generate")?.addEventListener("click", async () => {
       border,
       borders: border,
       magLimit, aperture, fullview, guides, constellation, constellationSegments,
-      light, noInfo, infoText, showBorder, transparentBg, starShape, starPoints, zoomOut,
+      light, noInfo, infoText, showBorder, transparentBg, starShape, starPoints, starShapeMagCutoff, starShapeScale, zoomOut,
       downloadScale,
       blankCircle, blankRadius, blankDistance,
       guideDecMin, guideDecMax, guideDecStep, guideMeridianRange,
