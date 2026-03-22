@@ -26,13 +26,14 @@ const XTOOL_COLOR_PRESET = {
   "constellation-color": "#c29900",
   "guide-color": "#848b96",
 };
+const APP_PAGE_URL = "https://corvus2606.github.io/starmap-svg/";
 const PERSISTED_CONTROL_IDS = [
   "coord", "datePicker", "timePicker", "utc", "info",
   "guides", "constellation", "show-border", "star-shape", "zoom-out",
-  "summertime", "light", "no-info", "transparent-bg",
+  "summertime", "no-info", "transparent-bg",
   "blank-circle", "blank-radius", "blank-distance",
   "guide-dec-min", "guide-dec-max", "guide-dec-step", "guide-meridian-range",
-  "magn", "aperture", "star-points", "width", "height",
+  "magn", "aperture", "star-points", "width", "height", "download-scale",
   "bg-color", "star-color", "guide-color", "constellation-color", "border-color", "text-color",
 ];
 
@@ -1019,10 +1020,6 @@ function resolveBlankCircle(opts, cx, cy, mapRadius) {
   return { x: cx, y, r };
 }
 
-function circleHolePath(cx, cy, r) {
-  return `M ${cx.toFixed(2)} ${(cy - r).toFixed(2)} a ${r.toFixed(2)} ${r.toFixed(2)} 0 1 0 0 ${(2 * r).toFixed(2)} a ${r.toFixed(2)} ${r.toFixed(2)} 0 1 0 0 ${(-2 * r).toFixed(2)} Z`;
-}
-
 function pointInsideCircle(x, y, c) {
   if (!c) return false;
   const dx = Number(x) - c.x;
@@ -1094,6 +1091,249 @@ function sliderToZoomOut(v) {
   return normalizeZoomOut(5 - (slider / 3) * 4);
 }
 
+function sanitizeSvgComment(value) {
+  return String(value ?? "")
+    .replaceAll("--", "- -")
+    .replace(/-$/g, "&#45;");
+}
+
+function buildSvgParameterComment(opts) {
+  const metadata = {
+    generator: "starmap-svg",
+    page_url: APP_PAGE_URL,
+    generated_at: new Date().toISOString(),
+    location: {
+      latitude: Number(opts.lat).toFixed(6),
+      longitude: Number(opts.lon).toFixed(6),
+    },
+    datetime: {
+      date: opts.dateRaw,
+      time: opts.timeRaw,
+      utc: opts.utc,
+      summertime: !!opts.summertime,
+    },
+    output: {
+      width_mm: opts.width,
+      height_mm: opts.height,
+      download_scale_percent: opts.downloadScale ?? 100,
+      field_of_view_deg: Number((((2 * Math.atan(0.5) * 180) / Math.PI) * Number(opts.zoomOut || 1)).toFixed(1)),
+    },
+    render: {
+      mag_limit: opts.magLimit,
+      aperture: opts.aperture,
+      guides: !!opts.guides,
+      constellation: !!opts.constellation,
+      show_border: !!opts.showBorder,
+      star_shape: !!opts.starShape,
+      star_points: opts.starPoints,
+      transparent_background: !!opts.transparentBg,
+      no_info: !!opts.noInfo,
+    },
+    colors: {
+      background: opts.bgColor || "default",
+      star: opts.starColor || "default",
+      guide: opts.guideColor || "default",
+      constellation: opts.constellationColor || "default",
+      border: opts.borderColor || "default",
+      text: opts.textColor || "default",
+    },
+    blank_circle: {
+      enabled: !!opts.blankCircle,
+      radius_mm: opts.blankRadius ?? 0,
+      distance_mm: opts.blankDistance ?? 0,
+    },
+    guides_config: {
+      declination_min: opts.guideDecMin,
+      declination_max: opts.guideDecMax,
+      declination_step: opts.guideDecStep,
+      meridian_range: opts.guideMeridianRange,
+    },
+    info_text: opts.infoText || "",
+  };
+
+  return `<!--\n${sanitizeSvgComment(JSON.stringify(metadata, null, 2))}\n-->`;
+}
+
+function toDatePickerFromDdMmYyyy(v) {
+  const m = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(String(v || "").trim());
+  if (!m) return "";
+  return `${m[3]}-${m[2]}-${m[1]}`;
+}
+
+function toTimePickerFromHhMmSs(v) {
+  const parts = String(v || "").trim().replaceAll(".", ":").split(":");
+  const hh = String(parts[0] || "00").padStart(2, "0");
+  const mm = String(parts[1] || "00").padStart(2, "0");
+  const ss = String(parts[2] || "00").padStart(2, "0");
+  if (!/^\d{2}$/.test(hh) || !/^\d{2}$/.test(mm) || !/^\d{2}$/.test(ss)) return "";
+  return `${hh}:${mm}:${ss}`;
+}
+
+function normalizePageUrl(v) {
+  return String(v || "").trim().replace(/\/+$/, "") + "/";
+}
+
+function extractOwnMetadataFromSvg(svgText) {
+  const text = String(svgText || "");
+  if (!text.includes("<svg")) {
+    throw new Error("File is not an SVG document.");
+  }
+
+  const commentRegex = /<!--[\s\S]*?-->/g;
+  const comments = text.match(commentRegex) || [];
+
+  for (const rawComment of comments) {
+    const inner = rawComment.replace(/^<!--\s*/, "").replace(/\s*-->$/, "").trim();
+    if (!inner.startsWith("{")) continue;
+
+    try {
+      const parsed = JSON.parse(inner);
+      if (!parsed || typeof parsed !== "object") continue;
+
+      const isOwnGenerator = String(parsed.generator || "") === "starmap-svg";
+      const hasOwnUrl = normalizePageUrl(parsed.page_url) === APP_PAGE_URL;
+      const hasCoreBlocks = !!(parsed.location && parsed.datetime && parsed.output && parsed.render);
+
+      if (isOwnGenerator && hasOwnUrl && hasCoreBlocks) {
+        return parsed;
+      }
+    } catch {
+      // Ignore non-JSON comments
+    }
+  }
+
+  throw new Error("SVG is missing valid starmap-svg metadata. Import only supports files generated by this app.");
+}
+
+async function applyImportedMetadataSettings(meta) {
+  if (!meta || typeof meta !== "object") throw new Error("Invalid metadata payload.");
+
+  const lat = Number(meta?.location?.latitude);
+  const lon = Number(meta?.location?.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    throw new Error("Imported metadata is missing a valid location.");
+  }
+
+  setValue("coord", `${lat.toFixed(6)},${lon.toFixed(6)}`);
+  if (map && marker) applyMapLocation(lat, lon, map.getZoom());
+
+  const datePicker = toDatePickerFromDdMmYyyy(meta?.datetime?.date);
+  if (datePicker) setValue("datePicker", datePicker);
+
+  const timePicker = toTimePickerFromHhMmSs(meta?.datetime?.time);
+  if (timePicker) setValue("timePicker", timePicker);
+
+  if (Number.isFinite(Number(meta?.datetime?.utc))) setValue("utc", String(meta.datetime.utc));
+
+  const summertimeEl = document.getElementById("summertime");
+  if (summertimeEl) summertimeEl.checked = !!meta?.datetime?.summertime;
+
+  if (Number.isFinite(Number(meta?.output?.width_mm))) setValue("width", String(meta.output.width_mm));
+  if (Number.isFinite(Number(meta?.output?.height_mm))) setValue("height", String(meta.output.height_mm));
+  if (Number.isFinite(Number(meta?.output?.download_scale_percent))) setValue("download-scale", String(meta.output.download_scale_percent));
+
+  if (Number.isFinite(Number(meta?.render?.mag_limit))) setValue("magn", String(meta.render.mag_limit));
+  if (Number.isFinite(Number(meta?.render?.aperture))) setValue("aperture", String(meta.render.aperture));
+  setValue("star-points", String(meta?.render?.star_points ?? getValue("star-points", "4")));
+
+  const setCheckbox = (id, value) => {
+    const el = document.getElementById(id);
+    if (el) el.checked = !!value;
+  };
+
+  setCheckbox("guides", meta?.render?.guides);
+  setCheckbox("constellation", meta?.render?.constellation);
+  setCheckbox("show-border", meta?.render?.show_border);
+  setCheckbox("star-shape", meta?.render?.star_shape);
+  setCheckbox("transparent-bg", meta?.render?.transparent_background);
+  setCheckbox("no-info", meta?.render?.no_info);
+
+  const fovEl = document.getElementById("field-of-view");
+  if (fovEl && Number.isFinite(Number(meta?.output?.field_of_view_deg))) {
+    fovEl.value = String(meta.output.field_of_view_deg);
+    fovEl.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  const setColor = (id, value) => {
+    const v = String(value || "").trim();
+    if (!/^#[0-9a-fA-F]{6}$/.test(v)) return;
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.value = v;
+    el.dataset.autoTheme = "0";
+  };
+
+  setColor("bg-color", meta?.colors?.background);
+  setColor("star-color", meta?.colors?.star);
+  setColor("guide-color", meta?.colors?.guide);
+  setColor("constellation-color", meta?.colors?.constellation);
+  setColor("border-color", meta?.colors?.border);
+  setColor("text-color", meta?.colors?.text);
+
+  setCheckbox("blank-circle", meta?.blank_circle?.enabled);
+  if (Number.isFinite(Number(meta?.blank_circle?.radius_mm))) setValue("blank-radius", String(meta.blank_circle.radius_mm));
+  if (Number.isFinite(Number(meta?.blank_circle?.distance_mm))) setValue("blank-distance", String(meta.blank_circle.distance_mm));
+
+  if (Number.isFinite(Number(meta?.guides_config?.declination_min))) setValue("guide-dec-min", String(meta.guides_config.declination_min));
+  if (Number.isFinite(Number(meta?.guides_config?.declination_max))) setValue("guide-dec-max", String(meta.guides_config.declination_max));
+  if (Number.isFinite(Number(meta?.guides_config?.declination_step))) setValue("guide-dec-step", String(meta.guides_config.declination_step));
+  if (Number.isFinite(Number(meta?.guides_config?.meridian_range))) setValue("guide-meridian-range", String(meta.guides_config.meridian_range));
+
+  const infoText = String(meta?.info_text || "").trim();
+  if (infoText) {
+    const normalized = toUpperCity(infoText);
+    LAST_PLACE_LABEL = normalized;
+    setValue("info", normalized);
+  }
+
+  syncTransparentBackgroundEnabled();
+  syncStarPointsEnabled();
+  saveSettingsToStorage();
+}
+
+function bindSvgSettingsImport() {
+  const input = document.getElementById("import-svg-settings");
+  const status = document.getElementById("import-status");
+  if (!input) return;
+
+  input.addEventListener("change", async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+
+    if (status) {
+      status.textContent = "Importing settings...";
+      status.style.color = "";
+    }
+
+    try {
+      const name = String(file.name || "").toLowerCase();
+      const type = String(file.type || "").toLowerCase();
+      const looksSvg = name.endsWith(".svg") || type.includes("svg");
+      if (!looksSvg) throw new Error("Only SVG files are supported.");
+
+      const text = await file.text();
+      const metadata = extractOwnMetadataFromSvg(text);
+      await applyImportedMetadataSettings(metadata);
+      const importedAt = String(metadata?.generated_at || "").trim();
+      if (status) {
+        status.textContent = importedAt
+          ? `Imported settings from ${importedAt}`
+          : "Imported settings successfully.";
+        status.style.color = "";
+      }
+    } catch (e) {
+      console.error("Import SVG settings failed:", e);
+      if (status) {
+        status.textContent = `Import failed: ${e.message || e}`;
+        status.style.color = "#dc2626";
+      }
+    } finally {
+      // Allow selecting the same file again.
+      input.value = "";
+    }
+  });
+}
+
 function buildSvg(stars, opts) {
   const width = opts.width;
   const height = opts.height;
@@ -1137,12 +1377,11 @@ function buildSvg(stars, opts) {
 
   const pieces = [];
   pieces.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}mm" height="${height}mm" viewBox="0 0 ${width} ${height}">`);
+  pieces.push(buildSvgParameterComment(opts));
   pieces.push(`<defs>`);
   pieces.push(`<clipPath id="${clipId}"><circle cx="${cx}" cy="${cy}" r="${radius}"/></clipPath>`);
   pieces.push(`</defs>`);
-  if (!transparentBg && hasBlankCircle) {
-    pieces.push(`<path d="M0 0 H${width} V${height} H0 Z ${circleHolePath(blankCircle.x, blankCircle.y, blankCircle.r)}" fill="${bg}" fill-rule="evenodd"/>`);
-  } else if (!transparentBg) {
+  if (!transparentBg) {
     pieces.push(`<rect width="100%" height="100%" fill="${bg}"/>`);
   }
   pieces.push(`<g clip-path="url(#${clipId})">`);
@@ -1244,7 +1483,7 @@ function setDefaultDateTime() {
 
 // call on load
 setDefaultDateTime();
-applyThemeColorDefaults(true);
+applyThemeColorDefaults(false, true);
 restoreSettingsFromStorage();
 syncInfoInputToUppercase();
 bindTimezoneRefreshHandlers();
@@ -1253,6 +1492,7 @@ bindThemeDefaultHandlers();
 bindStarPointsToggle();
 bindZoomOutSlider();
 bindSettingsPersistence();
+bindSvgSettingsImport();
 
 document.getElementById("coord")?.addEventListener("blur", async (ev) => {
   const v = ev?.target?.value;
@@ -1297,6 +1537,7 @@ document.getElementById("generate")?.addEventListener("click", async () => {
     const guideDecMax = clamp(Number(getValue("guide-dec-max", "60")), -89, 89);
     const guideDecStep = clamp(normalizePositiveNumber(getValue("guide-dec-step", "30"), 30), 1, 45);
     const guideMeridianRange = clamp(normalizePositiveNumber(getValue("guide-meridian-range", "75"), 75), 1, 89);
+    const downloadScale = clamp(normalizePositiveNumber(getValue("download-scale", "100"), 100), 0.1, 1000);
     const showBorder = getBool("show-border", false);
     const starShape = getBool("star-shape", false);
     const starPoints = normalizeStarPoints(getValue("star-points", "4"));
@@ -1325,6 +1566,7 @@ document.getElementById("generate")?.addEventListener("click", async () => {
       borders: border,
       magLimit, aperture, fullview, guides, constellation, constellationSegments,
       light, noInfo, infoText, showBorder, transparentBg, starShape, starPoints, zoomOut,
+      downloadScale,
       blankCircle, blankRadius, blankDistance,
       guideDecMin, guideDecMax, guideDecStep, guideMeridianRange,
       bgColor, starColor, guideColor, constellationColor, borderColor, textColor
@@ -1333,7 +1575,8 @@ document.getElementById("generate")?.addEventListener("click", async () => {
     const preview = document.getElementById("preview");
     if (preview) preview.innerHTML = svg;
 
-    setDownloadEnabled(true, svg);
+    const scaledDownloadSvg = applyDownloadScaleToSvg(svg, downloadScale);
+    setDownloadEnabled(true, scaledDownloadSvg);
   } catch (err) {
     console.error(err);
     setDownloadEnabled(false);
@@ -1497,6 +1740,41 @@ function setDownloadEnabled(enabled, svg = "") {
   }
 }
 
+function applyDownloadScaleToSvg(svg, scalePercent) {
+  const scale = clamp(normalizePositiveNumber(scalePercent, 100), 0.1, 1000) / 100;
+  if (Math.abs(scale - 1) < 1e-12) return svg;
+
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(svg, "image/svg+xml");
+    const svgEl = doc.documentElement;
+    if (!svgEl || svgEl.nodeName.toLowerCase() !== "svg") return svg;
+
+    const scaleAttr = (attrName) => {
+      const raw = String(svgEl.getAttribute(attrName) || "").trim();
+      if (!raw) return;
+
+      const m = /^(-?\d+(?:\.\d+)?)([a-z%]*)$/i.exec(raw);
+      if (!m) return;
+
+      const value = Number(m[1]);
+      const unit = m[2] || "";
+      if (!Number.isFinite(value)) return;
+
+      const next = Number((value * scale).toFixed(6));
+      svgEl.setAttribute(attrName, `${next}${unit}`);
+    };
+
+    scaleAttr("width");
+    scaleAttr("height");
+
+    const serializer = new XMLSerializer();
+    return serializer.serializeToString(doc);
+  } catch {
+    return svg;
+  }
+}
+
 function svgColor(value, fallback) {
   const v = String(value || "").trim();
   return v || fallback;
@@ -1526,10 +1804,9 @@ function getThemeDefaults(isLight) {
   };
 }
 
-function applyThemeColorDefaults(force = false) {
-  const light = getBool("light", false);
-  const next = getThemeDefaults(light);
-  const prev = getThemeDefaults(!light);
+function applyThemeColorDefaults(isLight, force = false) {
+  const next = getThemeDefaults(!!isLight);
+  const prev = getThemeDefaults(!isLight);
 
   for (const [id, value] of Object.entries(next)) {
     const el = document.getElementById(id);
@@ -1545,11 +1822,31 @@ function applyThemeColorDefaults(force = false) {
   }
 }
 
+function applyThemePalette(isLight) {
+  applyThemeColorDefaults(!!isLight, true);
+
+  const transparentEl = document.getElementById("transparent-bg");
+  if (transparentEl) {
+    transparentEl.checked = false;
+    syncTransparentBackgroundEnabled();
+  }
+
+  saveSettingsToStorage();
+}
+
 function bindThemeDefaultHandlers() {
-  const lightEl = document.getElementById("light");
-  if (lightEl) {
-    lightEl.addEventListener("change", () => {
-      applyThemeColorDefaults(false);
+  const lightBtn = document.getElementById("apply-light-palette");
+  if (lightBtn) {
+    lightBtn.addEventListener("click", () => {
+      applyThemePalette(true);
+      applyLeafletBaseLayer();
+    });
+  }
+
+  const darkBtn = document.getElementById("apply-dark-palette");
+  if (darkBtn) {
+    darkBtn.addEventListener("click", () => {
+      applyThemePalette(false);
       applyLeafletBaseLayer();
     });
   }
@@ -1603,18 +1900,73 @@ function bindStarPointsToggle() {
 
 function bindZoomOutSlider() {
   const input = document.getElementById("zoom-out");
+  const fovInput = document.getElementById("field-of-view");
   const readout = document.getElementById("zoom-out-readout");
   if (!input) return;
 
-  const sync = () => {
-    const sliderValue = Math.max(2, Math.min(3, Number(input.value) || 2.5));
-    input.value = String(sliderValue);
-    if (readout) readout.textContent = sliderValue.toFixed(1);
+  const baseVisibleAngleDeg = (2 * Math.atan(0.5) * 180) / Math.PI;
+  const maxVisibleAngleDeg = fieldOfViewDegreesForSliderMin();
+
+  function fieldOfViewDegreesForSliderMin() {
+    const zoomOut = sliderToZoomOut(2);
+    return baseVisibleAngleDeg * zoomOut;
+  }
+
+  const fieldOfViewDegrees = (sliderValue) => {
+    const zoomOut = sliderToZoomOut(sliderValue);
+    return baseVisibleAngleDeg * zoomOut;
   };
 
-  input.addEventListener("input", sync);
-  input.addEventListener("change", sync);
-  sync();
+  const sliderValueFromFieldOfView = (fov) => {
+    const clampedFov = clamp(Number(fov) || baseVisibleAngleDeg, baseVisibleAngleDeg, maxVisibleAngleDeg);
+    const zoomOut = clampedFov / baseVisibleAngleDeg;
+    const sliderValue = (3 * (5 - zoomOut)) / 4;
+    return Math.max(2, Math.min(3, sliderValue));
+  };
+
+  const syncFromSlider = () => {
+    const sliderValue = Math.max(2, Math.min(3, Number(input.value) || 2.5));
+    input.value = String(sliderValue);
+    const fov = fieldOfViewDegrees(sliderValue);
+    if (fovInput) fovInput.value = fov.toFixed(1);
+    if (readout) readout.textContent = `${fov.toFixed(1)} deg`;
+    input.title = `Field of view: ${fov.toFixed(1)} deg`;
+    if (fovInput) fovInput.title = `Field of view: ${fov.toFixed(1)} deg`;
+  };
+
+  const syncFromFieldOfView = () => {
+    if (!fovInput) return;
+    const sliderValue = sliderValueFromFieldOfView(fovInput.value);
+    input.value = sliderValue.toFixed(3);
+    syncFromSlider();
+  };
+
+  const syncSliderFromFieldOfViewInput = () => {
+    if (!fovInput) return;
+    const raw = String(fovInput.value || "").trim();
+    if (!raw) return;
+
+    const numeric = Number(raw);
+    if (!Number.isFinite(numeric)) return;
+    if (numeric < baseVisibleAngleDeg || numeric > maxVisibleAngleDeg) return;
+
+    const sliderValue = sliderValueFromFieldOfView(numeric);
+    input.value = sliderValue.toFixed(3);
+
+    const fov = fieldOfViewDegrees(sliderValue);
+    if (readout) readout.textContent = `${fov.toFixed(1)} deg`;
+    input.title = `Field of view: ${fov.toFixed(1)} deg`;
+    fovInput.title = `Field of view: ${fov.toFixed(1)} deg`;
+  };
+
+  input.addEventListener("input", syncFromSlider);
+  input.addEventListener("change", syncFromSlider);
+  if (fovInput) {
+    fovInput.addEventListener("input", syncSliderFromFieldOfViewInput);
+    fovInput.addEventListener("change", syncFromFieldOfView);
+    fovInput.addEventListener("blur", syncFromFieldOfView);
+  }
+  syncFromSlider();
 }
 
 function bindResetGuideDefaults() {
@@ -1647,6 +1999,11 @@ function bindApplyXToolPalette() {
 
   btn.addEventListener("click", () => {
     applyColorPreset(XTOOL_COLOR_PRESET);
+    const transparentEl = document.getElementById("transparent-bg");
+    if (transparentEl) {
+      transparentEl.checked = true;
+      syncTransparentBackgroundEnabled();
+    }
     saveSettingsToStorage();
   });
 }

@@ -251,6 +251,31 @@
       height: 38px;
       padding: 4px;
     }
+
+    .color-palette-layout {
+      display: grid;
+      grid-template-columns: 1fr 220px;
+      gap: 12px;
+      align-items: start;
+    }
+
+    .palette-controls {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .import-status {
+      font-size: .85rem;
+      color: var(--muted);
+      min-height: 1.2em;
+    }
+
+    @media (max-width: 760px) {
+      .color-palette-layout {
+        grid-template-columns: 1fr;
+      }
+    }
   </style>
 </head>
 <body>
@@ -266,40 +291,70 @@
     <div id="map"></div>
 
     <div class="row">
-      <label>Coordinates:
+      <label title="Latitude and longitude for the star map center point.">Coordinates:
         <input id="coord" placeholder="lat,lon" value="60.186,24.959" />
       </label>
       <!-- User-friendly pickers -->
-      <label>Date:
+      <label title="Local calendar date used for sky calculation.">Date:
         <input id="datePicker" type="date" />
       </label>
-      <label>Time:
+      <label title="Local time used for sky calculation.">Time:
         <input id="timePicker" type="time" step="1" />
       </label>
-      <label>UTC Offset:
-        <input id="utc" type="number" step="0.5" value="0" title="UTC offset" />
-      </label>
-      <label>Info:
+      <label title="Optional caption shown in the map text area.">Info:
         <input id="info" placeholder="Info text (optional)" />
       </label>
     </div>
     <div class="row" style="margin-top:10px;">
-      <label><input id="guides" type="checkbox" /> guides</label>
-      <label><input id="constellation" type="checkbox" /> constellation</label>
-      <label><input type="checkbox" id="show-border" /> border</label>
-      <label><input type="checkbox" id="star-shape" /> star shapes</label>
-      <label>Zoom
-          <span class="zoom-out-controls">
-            <span class="zoom-out-hint zoom-out-left">out</span>
-            <input id="zoom-out" type="range" min="2" max="3" step="0.1" value="2.5" list="zoom-slider-ticks" title="Left is most zoomed out, right is most zoomed in" />
-            <span class="zoom-out-hint zoom-out-right">in</span>
+      <label title="Show equatorial guide lines."><input id="guides" type="checkbox" /> guides</label>
+      <label title="Draw constellation connection lines."><input id="constellation" type="checkbox" /> constellation</label>
+      <label title="Draw outer border circle (and blank-circle border when enabled)."><input type="checkbox" id="show-border" /> border</label>        <label title="Hide the bottom-left text annotation on the output."><input id="no-info" type="checkbox" /> no info</label>      
+      <label title="Render larger stars as star-shaped symbols instead of circles."><input type="checkbox" id="star-shape" /> star shapes</label>
+    </div>
+    <div class="row">
+        <label title="Physical output width in millimeters.">Width (mm)
+          <input id="width" type="number" min="1" step="1" value="200" title="Output width in millimeters" />
+        </label>
+        <label title="Physical output height in millimeters.">Height (mm)
+          <input id="height" type="number" min="1" step="1" value="200" title="Output height in millimeters" />
+        </label>
+    </div>
+    <details>
+      <summary>Advanced options</summary>
+      <div class="row" style="margin-top:10px;">
+        <label title="Automatically detected daylight saving time status for the selected date and location."><input id="summertime" type="checkbox" disabled aria-disabled="true" /> summertime</label>
+        <!--<label><input id="fullview" type="checkbox" /> fullview</label>-->
+        <label title="Timezone offset from UTC for the selected date and location.">UTC Offset:
+        <input id="utc" type="number" step="0.5" value="0" title="UTC offset" />
+      </label>
+      </div>
+
+      <div class="row">
+        <label title="Maximum visible star magnitude. Higher values include dimmer stars.">Magnitude
+          <input id="magn" type="number" step="0.1" value="5.7" title="Magnitude limit" />
+        </label>
+        <label title="Controls base star dot size.">Aperture
+          <input id="aperture" type="number" step="0.1" value="0.4" title="Star size aperture" />
+        </label>
+        <label title="Number of points per star when star shapes are enabled.">
+          Star points
+          <input id="star-points" type="number" min="3" max="12" step="1" value="4" disabled />
+        </label>
+      </div>
+      <div class="row">
+      <label title="Adjust the map field of view angle. Wider angles show more sky.">Field of view
+         <!--<span class="zoom-out-controls">-->
+        <input id="field-of-view" type="number" min="53" max="124" step="5" value="88" title="Field of view angle in degrees" disabled aria-disabled="true"/>
+        <span class="zoom-out-hint zoom-out-left">124 deg</span>
+        <input id="zoom-out" type="range" min="2" max="3" step="0.1" value="2.5" list="zoom-slider-ticks" title="Field of view angle" />
+        <span class="zoom-out-hint zoom-out-right">53 deg</span>
             <!--<span id="zoom-out-readout">2.5</span>
             <span class="zoom-out-ticks" aria-hidden="true">
               <span>-1</span>
               <span>0</span>
               <span>1</span>
-            </span>-->
-          </span>
+            </span>
+          </span>-->
           <datalist id="zoom-slider-ticks">
             <option value="2"></option>
             <option value="2.5"></option>
@@ -307,110 +362,106 @@
           </datalist>
         </label>
     </div>
-    <details>
-      <summary>Advanced options</summary>
-      <div class="row" style="margin-top:10px;">
-        <label><input id="summertime" type="checkbox" /> summertime</label>
-        <!--<label><input id="fullview" type="checkbox" /> fullview</label>-->
-        <label><input id="light" type="checkbox" /> light theme</label>
-        <label><input id="no-info" type="checkbox" /> no info</label>
-      </div>
-
       <div class="row">
-        <label>Magnitude
-          <input id="magn" type="number" step="0.1" value="5.7" title="Magnitude limit" />
-        </label>
-        <label>Aperture
-          <input id="aperture" type="number" step="0.1" value="0.4" title="Star size aperture" />
-        </label>
-        <label>
-          Star points
-          <input id="star-points" type="number" min="3" max="12" step="1" value="4" disabled />
+        <label title="Scale applied only to saved SVG dimensions. Preview stays full size.">Download scale (%)
+          <input id="download-scale" type="number" min="0.1" step="0.1" value="100" title="Scale applied only to saved SVG dimensions" />
         </label>
       </div>
-
+      <details>
+        <summary>Guides</summary>
       <div class="row">
-        <label>Declination min (deg)
+        <label title="Lowest declination used for guide bands.">Declination min (deg)
           <input id="guide-dec-min" type="number" min="-89" max="89" step="1" value="-60" title="Minimum declination for guide bands" />
         </label>
-        <label>Declination max (deg)
+        <label title="Highest declination used for guide bands.">Declination max (deg)
           <input id="guide-dec-max" type="number" min="-89" max="89" step="1" value="60" title="Maximum declination for guide bands" />
         </label>
-        <label>Declination step (deg)
+        <label title="Spacing between declination guide bands.">Declination step (deg)
           <input id="guide-dec-step" type="number" min="1" max="45" step="1" value="30" title="Spacing between declination guide bands" />
         </label>
       </div>
-
       <div class="row">
-        <label>Meridian range (deg)
+        <label title="Meridian guides are drawn from negative to positive this declination range.">Meridian range (deg)
           <input id="guide-meridian-range" type="number" min="1" max="89" step="0.5" value="75" title="Draw meridian guides from -range to +range declination" />
         </label>
         <button id="reset-guide-defaults" type="button">Reset guide defaults</button>
       </div>
-      <div class="row">
-        <label>Width (mm)
-          <input id="width" type="number" min="1" step="1" value="200" title="Output width in millimeters" />
-        </label>
-        <label>Height (mm)
-          <input id="height" type="number" min="1" step="1" value="200" title="Output height in millimeters" />
-        </label>
-      </div>
+      </details>
+      <details>
+        <summary>Colors</summary>
+        <div class="color-palette-layout">
+          <div>
+            <div class="row">
+              <label title="Background color used when transparent background is off.">
+                <input id="bg-color" type="color" value="#2d3b62" />
+                Background
+              </label>
+              <label title="Make output background transparent.">
+                <input id="transparent-bg" type="checkbox" />
+                Transparent background
+              </label>
+            </div>
 
-      <div class="row">
-        <label>
-          <input id="bg-color" type="color" value="#2d3b62" />
-          Background
-        </label>
-        <label>
-          <input id="transparent-bg" type="checkbox" />
-          Transparent background
-        </label>
-      </div>
+            <div class="row">
+              <label title="Color used for stars.">
+                <input id="star-color" type="color" value="#ffffff" />
+                Stars
+              </label>
+            </div>
 
-      <div class="row">
-        <label>
-          <input id="star-color" type="color" value="#ffffff" />
-          Stars
-        </label>
-      </div>
+            <div class="row">
+              <label title="Color used for guide lines.">
+                <input id="guide-color" type="color" value="#cfd6ff" />
+                Guides
+              </label>
+            </div>
 
-      <div class="row">
-        <label>
-          <input id="guide-color" type="color" value="#cfd6ff" />
-          Guides
-        </label>
-      </div>
+            <div class="row">
+              <label title="Color used for constellation lines.">
+                <input id="constellation-color" type="color" value="#ffffff" />
+                Constellation
+              </label>
+            </div>
 
-      <div class="row">
-        <label>
-          <input id="constellation-color" type="color" value="#ffffff" />
-          Constellation
-        </label>
-      </div>
+            <div class="row">
+              <label title="Color used for border circle(s) when border is enabled.">
+                <input id="border-color" type="color" value="#ffffff" />
+                Border
+              </label>
+            </div>
 
-      <div class="row">
-        <label>
-          <input id="border-color" type="color" value="#ffffff" />
-          Border
-        </label>
-      </div>
+            <div class="row">
+              <label title="Color used for info text labels.">
+                <input id="text-color" type="color" value="#ffffff" />
+                Text
+              </label>
+            </div>
+          </div>
 
+          <div class="palette-controls">
+            <button id="apply-light-palette" type="button">Apply light palette</button>
+            <button id="apply-dark-palette" type="button">Apply dark palette</button>
+            <button id="apply-xtool-palette" type="button">Apply Laser palette</button>
+          </div>
+        </div>
+      </details>
+      <details>
+        <summary>Blank Cutout</summary>
       <div class="row">
-        <label>
-          <input id="text-color" type="color" value="#ffffff" />
-          Text
-        </label>
-        <button id="apply-xtool-palette" type="button">Apply XTool palette</button>
-      </div>
-
-      <div class="row">
-        <label><input id="blank-circle" type="checkbox" /> blank circle</label>
-        <label>Radius (mm)
+        <label title="Enable a blank circular cutout area."><input id="blank-circle" type="checkbox" /> blank circle</label>
+        <label title="Radius of the blank circle in millimeters.">Radius (mm)
           <input id="blank-radius" type="number" min="0" step="0.1" value="15" title="Blank circle radius in millimeters" />
         </label>
-        <label>Distance from top edge (mm)
+        <label title="Distance from the map top edge to the blank circle edge in millimeters.">Distance from top edge (mm)
           <input id="blank-distance" type="number" min="0" step="0.1" value="6" title="Distance from map edge to blank circle edge in millimeters" />
         </label>
+      </div>
+      </details>
+      <div class="row">
+        <label title="Import settings from an SVG previously generated by this app.">Import SVG settings
+          <input id="import-svg-settings" type="file" accept=".svg,image/svg+xml" />
+        </label>
+        <span id="import-status" class="import-status" aria-live="polite"></span>
       </div>
 
     </details>
