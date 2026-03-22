@@ -11,6 +11,10 @@
     integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
     crossorigin=""
   />
+  <link
+    rel="stylesheet"
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Space+Grotesk:wght@400;600&family=Merriweather:wght@400;700&family=JetBrains+Mono:wght@400;600&family=Playfair+Display:wght@400;700&family=Manrope:wght@400;600&family=DM+Sans:wght@400;700&family=Nunito:wght@400;700&family=Lora:wght@400;700&family=Cormorant+Garamond:wght@400;600&family=Montserrat:wght@400;600&family=Poppins:wght@400;600&family=Oswald:wght@400;600&family=Inconsolata:wght@400;600&display=swap"
+  />
   <style>
     :root{
       --bg: #f5f7fb;
@@ -133,7 +137,7 @@
       font-size: .95rem;
     }
 
-    input, button, a#download {
+    input, select, button, a#download {
       border-radius: 10px;
       border: 1px solid var(--border);
       background: var(--input-bg);
@@ -143,11 +147,11 @@
       text-decoration: none;
     }
 
-    input[type="text"], input[type="number"], input[type="date"], input[type="time"] {
+    input[type="text"], input[type="number"], input[type="date"], input[type="time"], select {
       min-height: 38px;
     }
 
-    input:focus, button:focus, a#download:focus {
+    input:focus, select:focus, button:focus, a#download:focus {
       outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
       outline-offset: 1px;
     }
@@ -271,6 +275,19 @@
       min-height: 1.2em;
     }
 
+    .info-font-preview {
+      width: 100%;
+      min-height: 44px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      background: var(--panel);
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      line-height: 1.25;
+    }
+
     @media (max-width: 760px) {
       .color-palette-layout {
         grid-template-columns: 1fr;
@@ -368,6 +385,37 @@
         </label>
       </div>
       <details>
+        <summary>Info Text</summary>
+          <div class="row">
+              <label title="Font used for info text in the generated SVG.">Info font
+                <select id="info-font-family">
+                  <option value="Inter, sans-serif">Inter</option>
+                  <option value="'Space Grotesk', sans-serif">Space Grotesk</option>
+                  <option value="Manrope, sans-serif">Manrope</option>
+                  <option value="'DM Sans', sans-serif">DM Sans</option>
+                  <option value="Nunito, sans-serif">Nunito</option>
+                  <option value="Montserrat, sans-serif">Montserrat</option>
+                  <option value="Poppins, sans-serif">Poppins</option>
+                  <option value="Merriweather, serif">Merriweather</option>
+                  <option value="Lora, serif">Lora</option>
+                  <option value="'Cormorant Garamond', serif">Cormorant Garamond</option>
+                  <option value="'JetBrains Mono', monospace">JetBrains Mono</option>
+                  <option value="Inconsolata, monospace">Inconsolata</option>
+                  <option value="'Playfair Display', serif">Playfair Display</option>
+                  <option value="Oswald, sans-serif">Oswald</option>
+                </select>
+              </label>
+              <label title="Info text size in mm. Set to 0 for automatic proportional sizing.">Info font size (mm)
+                <input id="info-font-size" type="number" min="0" step="0.1" value="0" />
+              </label>
+            </div>
+            <div class="row">
+              <label title="Preview of the info text with the selected font and size.">Preview
+              <div id="info-font-preview" class="info-font-preview" aria-live="polite">Info text preview</div>
+              </label>
+            </div>
+      </details>
+      <details>
         <summary>Guides</summary>
       <div class="row">
         <label title="Lowest declination used for guide bands.">Declination min (deg)
@@ -436,7 +484,6 @@
                 Text
               </label>
             </div>
-          </div>
 
           <div class="palette-controls">
             <button id="apply-light-palette" type="button">Apply light palette</button>

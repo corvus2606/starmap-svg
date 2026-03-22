@@ -35,6 +35,7 @@ const PERSISTED_CONTROL_IDS = [
   "guide-dec-min", "guide-dec-max", "guide-dec-step", "guide-meridian-range",
   "magn", "aperture", "star-points", "width", "height", "download-scale",
   "bg-color", "star-color", "guide-color", "constellation-color", "border-color", "text-color",
+  "info-font-family", "info-font-size",
 ];
 
 function applyMapLocation(lat, lng, zoom = 8) {
@@ -1128,6 +1129,8 @@ function buildSvgParameterComment(opts) {
       star_points: opts.starPoints,
       transparent_background: !!opts.transparentBg,
       no_info: !!opts.noInfo,
+      info_font_family: opts.infoFontFamily || "Inter, sans-serif",
+      info_font_size_mm: opts.infoFontSize ?? 0,
     },
     colors: {
       background: opts.bgColor || "default",
@@ -1270,6 +1273,13 @@ async function applyImportedMetadataSettings(meta) {
   setColor("border-color", meta?.colors?.border);
   setColor("text-color", meta?.colors?.text);
 
+  if (meta?.render?.info_font_family != null) {
+    setValue("info-font-family", String(meta.render.info_font_family));
+  }
+  if (Number.isFinite(Number(meta?.render?.info_font_size_mm))) {
+    setValue("info-font-size", String(meta.render.info_font_size_mm));
+  }
+
   setCheckbox("blank-circle", meta?.blank_circle?.enabled);
   if (Number.isFinite(Number(meta?.blank_circle?.radius_mm))) setValue("blank-radius", String(meta.blank_circle.radius_mm));
   if (Number.isFinite(Number(meta?.blank_circle?.distance_mm))) setValue("blank-distance", String(meta.blank_circle.distance_mm));
@@ -1288,6 +1298,7 @@ async function applyImportedMetadataSettings(meta) {
 
   syncTransparentBackgroundEnabled();
   syncStarPointsEnabled();
+  updateInfoTextPreview();
   saveSettingsToStorage();
 }
 
@@ -1361,6 +1372,8 @@ function buildSvg(stars, opts) {
   const conFill = svgColor(opts.constellationColor, constellationDefault);
   const borderClr = svgColor(opts.borderColor, borderDefault);
   const textClr = svgColor(opts.textColor, textDefault);
+  const infoFontFamily = String(opts.infoFontFamily || "Inter, sans-serif").trim() || "Inter, sans-serif";
+  const infoFontSizeRequested = normalizeNonNegativeNumber(opts.infoFontSize, 0);
 
   const clipId = "map-clip";
 
@@ -1430,11 +1443,22 @@ function buildSvg(stars, opts) {
   }
 
   if (!opts.noInfo) {
+    const minDim = Math.max(1, Math.min(width, height));
+    const autoInfoFontSize = clamp(minDim * 0.012, 1.8, 24);
+    const infoFontSize = infoFontSizeRequested > 0 ? infoFontSizeRequested : autoInfoFontSize;
+    const lineStep = infoFontSize * 1.25;
+    const bottomPad = Math.max(2, infoFontSize * 0.55);
+    const y3 = height - bottomPad;
+    const y2 = y3 - lineStep;
+    const y1 = y2 - lineStep;
+
     const ns = opts.lat >= 0 ? "N" : "S";
     const ew = opts.lon >= 0 ? "E" : "W";
-    pieces.push(`<text x="16" y="${height - 30}" fill="${textClr}" font-size="10" font-family="sans-serif">${escapeXml(opts.infoText)}</text>`);
-    pieces.push(`<text x="16" y="${height - 18}" fill="${textClr}" font-size="10" font-family="sans-serif">${Math.abs(opts.lat).toFixed(4)} ${ns} ${Math.abs(opts.lon).toFixed(4)} ${ew}</text>`);
-    pieces.push(`<text x="16" y="${height - 6}" fill="${textClr}" font-size="10" font-family="sans-serif">${opts.dateRaw} ${opts.timeRaw} UTC ${opts.utc}</text>`);
+    const escapedFont = escapeXml(infoFontFamily);
+    const fontSizeText = infoFontSize.toFixed(2);
+    pieces.push(`<text x="16" y="${y1.toFixed(2)}" fill="${textClr}" font-size="${fontSizeText}" font-family="${escapedFont}">${escapeXml(opts.infoText)}</text>`);
+    pieces.push(`<text x="16" y="${y2.toFixed(2)}" fill="${textClr}" font-size="${fontSizeText}" font-family="${escapedFont}">${Math.abs(opts.lat).toFixed(4)} ${ns} ${Math.abs(opts.lon).toFixed(4)} ${ew}</text>`);
+    pieces.push(`<text x="16" y="${y3.toFixed(2)}" fill="${textClr}" font-size="${fontSizeText}" font-family="${escapedFont}">${opts.dateRaw} ${opts.timeRaw} UTC ${opts.utc}</text>`);
   }
 
   pieces.push(`</svg>`);
@@ -1549,6 +1573,8 @@ document.getElementById("generate")?.addEventListener("click", async () => {
     const constellationColor = getValue("constellation-color", "");
     const borderColor = getValue("border-color", "");
     const textColor = getValue("text-color", "");
+    const infoFontFamily = getValue("info-font-family", "Inter, sans-serif");
+    const infoFontSize = normalizeNonNegativeNumber(getValue("info-font-size", "0"), 0);
 
     // Use manual input first, then fall back to last place label from map search
     const manualInfo = toUpperCity(getValue("info", ""));
@@ -1569,7 +1595,8 @@ document.getElementById("generate")?.addEventListener("click", async () => {
       downloadScale,
       blankCircle, blankRadius, blankDistance,
       guideDecMin, guideDecMax, guideDecStep, guideMeridianRange,
-      bgColor, starColor, guideColor, constellationColor, borderColor, textColor
+      bgColor, starColor, guideColor, constellationColor, borderColor, textColor,
+      infoFontFamily, infoFontSize,
     });
 
     const preview = document.getElementById("preview");
@@ -1832,6 +1859,7 @@ function applyThemePalette(isLight) {
   }
 
   saveSettingsToStorage();
+  updateInfoTextPreview();
 }
 
 function bindThemeDefaultHandlers() {
@@ -1991,6 +2019,49 @@ function applyColorPreset(preset) {
     el.value = String(value || "");
     el.dataset.autoTheme = "0";
   }
+  updateInfoTextPreview();
+}
+
+function updateInfoTextPreview() {
+  const previewEl = document.getElementById("info-font-preview");
+  if (!previewEl) return;
+
+  const fontFamily = getValue("info-font-family", "Inter, sans-serif") || "Inter, sans-serif";
+  const requestedMm = normalizeNonNegativeNumber(getValue("info-font-size", "0"), 0);
+  const widthMm = normalizePositiveNumber(getValue("width", "200"), 200);
+  const heightMm = normalizePositiveNumber(getValue("height", "200"), 200);
+  const autoMm = clamp(Math.min(widthMm, heightMm) * 0.012, 1.8, 24);
+  const effectiveMm = requestedMm > 0 ? requestedMm : autoMm;
+  const pxPerMm = 96 / 25.4;
+  const fontPx = clamp(effectiveMm * pxPerMm, 9, 64);
+
+  const infoValue = String(getValue("info", "") || "").trim();
+  const sampleText = infoValue || "INFO TEXT PREVIEW";
+  const textColor = svgColor(getValue("text-color", ""), "#ffffff");
+  const bgColor = svgColor(getValue("bg-color", ""), "#2d3b62");
+  const transparentBg = getBool("transparent-bg", false);
+
+  previewEl.textContent = sampleText;
+  previewEl.style.fontFamily = fontFamily;
+  previewEl.style.fontSize = `${fontPx.toFixed(2)}px`;
+  previewEl.style.color = textColor;
+  previewEl.style.background = transparentBg ? "transparent" : bgColor;
+  previewEl.title = `Font: ${fontFamily} | Size: ${effectiveMm.toFixed(2)} mm`;
+}
+
+function bindInfoTextPreview() {
+  const ids = [
+    "info-font-family", "info-font-size", "info",
+    "text-color", "bg-color", "transparent-bg",
+    "width", "height",
+  ];
+  for (const id of ids) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.addEventListener("input", updateInfoTextPreview);
+    el.addEventListener("change", updateInfoTextPreview);
+  }
+  updateInfoTextPreview();
 }
 
 function bindApplyXToolPalette() {
@@ -2005,10 +2076,12 @@ function bindApplyXToolPalette() {
       syncTransparentBackgroundEnabled();
     }
     saveSettingsToStorage();
+    updateInfoTextPreview();
   });
 }
 
 bindApplyXToolPalette();
+bindInfoTextPreview();
 
 document.addEventListener("DOMContentLoaded", () => {
   window.initMap().catch((e) => {
