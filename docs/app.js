@@ -209,7 +209,7 @@ async function setupAddressSearch() {
 }
 
 const GOOGLE_MAP_ID = "YOUR_MAP_ID";
-const GOOGLE_MAPS_API_KEY = "AIzaSyBh0ZOoRiOk40Ny_1FczvOU9QQK0eYvyvk"; // This is a browser key with referrer restrictions, safe to expose
+const GOOGLE_MAPS_API_KEY = "***API-KEY***"; // This should be a browser key with referrer restrictions
 
 async function reverseGeocode(lat, lng) {
   try {
