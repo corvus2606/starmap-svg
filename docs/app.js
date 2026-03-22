@@ -17,6 +17,7 @@ const FALLBACK_STARS = [
 
 let CATALOG_CACHE = null;
 let CONSTELLATION_CACHE = null;
+let CONSTELLATION_NAME_CACHE = null;
 let CATALOG_SOURCE = "unknown";
 const MAP_PIN_VIEW_MILES = 5;
 const SETTINGS_STORAGE_KEY = "starmap-svg-settings-v2-mm";
@@ -29,7 +30,7 @@ const XTOOL_COLOR_PRESET = {
 const APP_PAGE_URL = "https://corvus2606.github.io/starmap-svg/";
 const PERSISTED_CONTROL_IDS = [
   "coord", "datePicker", "timePicker", "utc", "info",
-  "guides", "constellation", "show-border", "star-shape", "zoom-out",
+  "guides", "constellation", "constellation-names", "show-border", "star-shape", "zoom-out",
   "summertime", "no-info", "transparent-bg",
   "blank-circle", "blank-radius", "blank-distance",
   "guide-dec-min", "guide-dec-max", "guide-dec-step", "guide-meridian-range",
@@ -941,6 +942,7 @@ function parseConstellationLineRow(line) {
 
   const parts = t.split(/\s+/);
   if (parts.length < 5) return null;
+  const code = String(parts[0] || "").toUpperCase();
 
   const ra1  = Number(parts[1]);
   const dec1 = Number(parts[2]);
@@ -950,10 +952,11 @@ function parseConstellationLineRow(line) {
   if (![ra1, dec1, ra2, dec2].every(Number.isFinite)) return null;
   if (ra1 < 0 || ra1 >= 24 || ra2 < 0 || ra2 >= 24) return null;
 
-  return [
-    { ra: ra1, dec: dec1 },
-    { ra: ra2, dec: dec2 },
-  ];
+  return {
+    code,
+    a: { ra: ra1, dec: dec1 },
+    b: { ra: ra2, dec: dec2 },
+  };
 }
 
 async function loadConstellationSegments(stars) {
@@ -984,6 +987,32 @@ async function loadConstellationSegments(stars) {
   console.log(`Constellation: ${segments.length} segments loaded, ${skipped} skipped`);
   CONSTELLATION_CACHE = segments;
   return CONSTELLATION_CACHE;
+}
+
+async function loadConstellationNames() {
+  if (CONSTELLATION_NAME_CACHE) return CONSTELLATION_NAME_CACHE;
+
+  const txt = await fetchFirstText([
+    "./datafiles/constellation.txt",
+  ]);
+
+  if (!txt) {
+    console.warn("constellation.txt not found");
+    CONSTELLATION_NAME_CACHE = {};
+    return CONSTELLATION_NAME_CACHE;
+  }
+
+  const names = {};
+  for (const line of txt.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const match = trimmed.match(/^([A-Z]{3})\s+(.+)$/);
+    if (!match) continue;
+    names[match[1]] = match[2].trim();
+  }
+
+  CONSTELLATION_NAME_CACHE = names;
+  return CONSTELLATION_NAME_CACHE;
 }
 
 function pyDateAndTimeToRad(dateStr, timeStr, utc, summertime) {
@@ -1235,6 +1264,7 @@ function buildSvgParameterComment(opts) {
       aperture: opts.aperture,
       guides: !!opts.guides,
       constellation: !!opts.constellation,
+      constellation_labels: !!opts.constellationNames,
       show_border: !!opts.showBorder,
       star_shape: !!opts.starShape,
       star_points: opts.starPoints,
@@ -1361,6 +1391,7 @@ async function applyImportedMetadataSettings(meta) {
 
   setCheckbox("guides", meta?.render?.guides);
   setCheckbox("constellation", meta?.render?.constellation);
+  setCheckbox("constellation-names", meta?.render?.constellation_labels);
   setCheckbox("show-border", meta?.render?.show_border);
   setCheckbox("star-shape", meta?.render?.star_shape);
   setCheckbox("transparent-bg", meta?.render?.transparent_background);
@@ -1472,6 +1503,7 @@ function buildSvg(stars, opts) {
   const showBorder = !!opts.showBorder;
   const transparentBg = !!opts.transparentBg;
   const useStarShapes = !!opts.starShape;
+  const showConstellationNames = !!opts.constellationNames;
   const starPoints = normalizeStarPoints(opts.starPoints);
   const starShapeMagCutoff = Number.isFinite(Number(opts.starShapeMagCutoff)) ? Number(opts.starShapeMagCutoff) : 3.25;
   const starShapeScale = Number.isFinite(Number(opts.starShapeScale)) && Number(opts.starShapeScale) > 0 ? Number(opts.starShapeScale) : 1.2;
@@ -1524,7 +1556,8 @@ function buildSvg(stars, opts) {
   }
 
   if (opts.constellation && Array.isArray(opts.constellationSegments)) {
-    for (const [a, b] of opts.constellationSegments) {
+    for (const seg of opts.constellationSegments) {
+      const { a, b } = seg;
       const A = projectWithParams(Number(a.ra), Number(a.dec), proj);
       const B = projectWithParams(Number(b.ra), Number(b.dec), proj);
       if (!A || !B) continue;
@@ -1542,7 +1575,8 @@ function buildSvg(stars, opts) {
   if (opts.constellation && Array.isArray(opts.constellationSegments)) {
     const RA_TOL = 0.05;   // hours (~3 arcmin)
     const DEC_TOL = 0.15;  // degrees
-    for (const [a, b] of opts.constellationSegments) {
+    for (const seg of opts.constellationSegments) {
+      const { a, b } = seg;
       for (const ep of [a, b]) {
         let best = null, bestDist = Infinity;
         for (const s of stars) {
@@ -1556,6 +1590,34 @@ function buildSvg(stars, opts) {
         }
         if (best) constellationStarSet.add(best);
       }
+    }
+  }
+
+  if (showConstellationNames && Array.isArray(opts.constellationSegments)) {
+    const labelGroups = new Map();
+    for (const seg of opts.constellationSegments) {
+      const code = seg.code || "";
+      if (!code) continue;
+      if (!labelGroups.has(code)) labelGroups.set(code, []);
+      for (const ep of [seg.a, seg.b]) {
+        const p = projectWithParams(Number(ep.ra), Number(ep.dec), proj);
+        if (!p) continue;
+        if (pointInsideCircle(p.x, p.y, blankCircle)) continue;
+        labelGroups.get(code).push(p);
+      }
+    }
+
+    const escapedFont = escapeXml(infoFontFamily);
+    const autoLabelFontSize = clamp(Math.min(width, height) * 0.012, 2.5, 6.5);
+    const labelFontSize = infoFontSizeRequested > 0 ? infoFontSizeRequested : autoLabelFontSize;
+    for (const [code, points] of labelGroups.entries()) {
+      if (!points.length) continue;
+      const x = points.reduce((sum, p) => sum + p.x, 0) / points.length;
+      const y = points.reduce((sum, p) => sum + p.y, 0) / points.length;
+      if (pointInsideCircle(x, y, blankCircle)) continue;
+      const label = String(opts.constellationNamesMap?.[code] || code).trim();
+      if (!label) continue;
+      pieces.push(`<text x="${x.toFixed(2)}" y="${y.toFixed(2)}" fill="${conFill}" opacity="0.72" font-size="${labelFontSize.toFixed(2)}" font-family="${escapedFont}" text-anchor="middle" dominant-baseline="middle">${escapeXml(label)}</text>`);
     }
   }
 
@@ -1713,6 +1775,7 @@ document.getElementById("generate")?.addEventListener("click", async () => {
     const starPoints = normalizeStarPoints(getValue("star-points", "4"));
     const starShapeMagCutoff = normalizeNonNegativeNumber(getValue("star-shape-mag-cutoff", "3.25"), 3.25);
     const starShapeScale = clamp(normalizePositiveNumber(getValue("star-shape-scale", "1.2"), 1.2), 0.5, 4);
+    const constellationNames = getBool("constellation-names", false);
     const zoomOut = sliderToZoomOut(getValue("zoom-out", "2.5"));
 
     const bgColor = getValue("bg-color", "");
@@ -1731,7 +1794,9 @@ document.getElementById("generate")?.addEventListener("click", async () => {
 
     const border = 4;
     const stars = await loadCatalog();
-    const constellationSegments = constellation ? await loadConstellationSegments(stars) : [];
+    const needConstellationData = constellation || constellationNames;
+    const constellationSegments = needConstellationData ? await loadConstellationSegments(stars) : [];
+    const constellationNamesMap = constellationNames ? await loadConstellationNames() : {};
 
     const svg = buildSvg(stars, {
       lat, lon, utc, summertime, dateUtc, dateRaw, timeRaw,
@@ -1739,6 +1804,7 @@ document.getElementById("generate")?.addEventListener("click", async () => {
       border,
       borders: border,
       magLimit, aperture, fullview, guides, constellation, constellationSegments,
+      constellationNames, constellationNamesMap,
       light, noInfo, infoText, showBorder, transparentBg, starShape, starPoints, starShapeMagCutoff, starShapeScale, zoomOut,
       downloadScale,
       blankCircle, blankRadius, blankDistance,
